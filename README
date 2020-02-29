@@ -1,53 +1,76 @@
-Game-Xomb
+                                        .bbmoooxxxooommb.
+                                       .bmoooxx...xxooobb.
+                                      .bbmoxxxxxxxxxxxomb..
+                                      .bmooxxbbmmmbbxxoomb.
+                                      .bmxx.bbmooombb.xxmb .
+                                 _    bmxox.bmooxoomb.xoxmb.
+            __  _____  _ __ ___ | |__ bxxx.bmoox.xoomb.xxxb.
+            \ \/ / _ \| '_ ` _ \| '_ \xmox.bmox.@.xomb.xomx.
+           _ >  < (_) | | | | | | |_) xmox.bmoox.xoomb.xomx
+          (_)_/\_\___/|_| |_| |_|_.__/bmoox.bmooxoomb.xoombx
+                                     x.bmox.bbmooombb.xomb x
+                                    x .bmoox.bbmmmbb.xoomb  x
+                                    x .bbmoxx..bbb..xxomb   x
+                                    x  .bmoooxx...xxooobb   x
+                                    x   .bbmoooxxxooommb   .x
+                                    x   ..bmmmooooommbb    .
+                                    x     ..bbmmmmmbb      .
+                                    x       ..bbbbbb       .
+                                     x        .           .
+                                     x         .         ..
+                                      x         .        .
+                                      x         .       .
+                                       xx        .     .
+    Know then on Minos III sacred to Mars
+    do grow the spawn of Cadmus from afar
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+    as towers tall, monoliths for Clotho
+    to spread as she would. The Xarci Bedo
 
-A README file is required for CPAN modules since CPAN extracts the README
-file from a module distribution so that people browsing the archive
-can use it to get an idea of the module's uses. It is usually a good idea
-to provide version information here so that people can decide whether
-fixes for the module are worth downloading.
+    we call this foe. Do you now seek the stone
+    below of Dragon born to call your own?
 
+Xomb is a terminal-based roguelike. Assuming that the development tools,
+perl, App::cpanminus, and possibly also local::lib are installed and
+setup, in a suitable terminal install and run the game via:
 
-INSTALLATION
+    cpanm Game::Xomb
+    xomb
 
-To install this module, run the following commands:
+Documentation is available in xomb(1) or by running:
 
-	perl Build.PL
-	./Build
-	./Build test
-	./Build install
-
-SUPPORT AND DOCUMENTATION
-
-After installing, you can find documentation for this module with the
-perldoc command.
-
-    perldoc Game::Xomb
-
-You can also look for information at:
-
-    RT, CPAN's request tracker (report bugs here)
-        https://rt.cpan.org/NoAuth/Bugs.html?Dist=Game-Xomb
-
-    AnnoCPAN, Annotated CPAN documentation
-        http://annocpan.org/dist/Game-Xomb
-
-    CPAN Ratings
-        https://cpanratings.perl.org/d/Game-Xomb
-
-    Search CPAN
-        https://metacpan.org/release/Game-Xomb
+    perldoc xomb
 
 
-LICENSE AND COPYRIGHT
+For the source code, see:
 
-This software is Copyright (c) 2020 by Jeremy Mates.
+https://github.com/thrig/Game-Xomb
 
-This is free software, licensed under:
 
-  The (three-clause) BSD License
+This can be built and installed (chasing dependencies):
 
+    git clone https://github.com/thrig/Game-Xomb
+    cd Game-Xomb
+    cpanm .
+
+or without dependencies the manual old fashioned way:
+
+    perl Build.PL
+    ./Build
+    ./Build test
+    ./Build install
+
+and new releases may be authored along the lines of:
+
+    git tag -u ... -s
+    git push github master
+    RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build disttest
+    gzip --best Game-Xomb-...
+    cpan-upload ...
+    ./Build realclean
+
+If the same directory is shared between different systems the build tree
+may need to be rebuilt:
+
+    perl Build.PL
+    ./Build realclean

@@ -1,14 +1,16 @@
 Build.PL
 Changes
-lib/Game/typemap
+LICENSE
+MANIFEST
+META.json
+META.yml
+README
+bin/xomb
 lib/Game/Xomb.pm
 lib/Game/Xomb.xs
-MANIFEST			This list of files
+lib/Game/typemap
 ppport.h
-README
 t/00-load.t
-t/01-object.t
-t/02-feature.t
-t/manifest.t
-t/pod-coverage.t
+t/damage-stats.t
 t/pod.t
+t/xomb.t
