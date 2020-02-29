@@ -1,0 +1,110 @@
+#!perl
+#
+# launcher for Game::Xomb
+
+use 5.24.0;
+use warnings;
+use Getopt::Long qw(GetOptions);
+use Game::Xomb;
+
+our ($ddelay, $err);
+
+GetOptions(
+    'help|h|?' => sub {
+        warn <<'TLDR';
+Usage: xomb [options]
+
+  --err     - send STDERR to this file if not already redirected
+  --ddelay  - draw delay in seconds between moves
+  --version - shows xomb version and then quits
+
+xomb hides STDERR by default to not show warning or error messages;
+debug with a command similar to
+
+  xomb 2>log
+  xomb --err=log
+
+and then inspect the log file when things do go awry
+
+TLDR
+        exit 64;
+    },
+    'err=s'     => \$err,
+    'ddelay=f'  => \$ddelay,
+    'version|v' => sub { say $Game::Xomb::VERSION; exit 1 },
+) or exit 64;
+
+$ddelay ||= 0.01;
+
+if (-t STDERR) {
+    close STDERR;
+    $err //= "$ENV{HOME}/co/Game-Xomb/log";    # DBG
+    if (defined $err) {
+        unless (open STDERR, '>', $err) {
+            say "Could not redirect STDERR to '$err': $!";
+            exit 1;
+        }
+        STDERR->autoflush(1);
+    }
+}
+
+Game::Xomb::game_loop($ddelay);
+exit(1);                                       # NOTREACHED
+
+__END__
+
+=head1 NAME
+
+B<xomb> - a game featuring @ versus the Xarci Bedo
+
+=head1 SYNOPSIS
+
+B<xomb>
+
+=head1 DESCRIPTION
+
+TODO
+
+=head2 Options
+
+TODO
+
+=head2 An Overview of the Game
+
+TODO
+
+=head2 Commands
+
+TODO
+
+=head1 DIAGNOSTICS
+
+Various messages may be shown by the Patrouille Kombat Computer (PKC) in
+response to actions taken during the game. Descriptions of some of the
+codes are listed below.
+
+=head2 PKC-0037
+
+No gate found. The player has attempted to navigate through a gate where
+none exists.
+
+=head1 EXIT STATUS
+
+B<xomb> exits with a 0 on victory, and >0 in every other case.
+
+=head1 SEE ALSO
+
+L<Game::Xomb>, L<rogue(6)>
+
+=head1 AUTHOR
+
+Jeremy Mates
+
+=head1 COPYRIGHT AND LICENSE
+
+Copyright (C) 2020 by Jeremy Mates
+
+This program is distributed under the (Revised) BSD License:
+L<http://www.opensource.org/licenses/BSD-3-Clause>
+
+=cut

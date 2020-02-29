@@ -1,53 +1,63 @@
-Game-Xomb
+                                        .bbmoooxxxooommb.
+                                       .bmoooxx...xxooobb.
+                                      .bbmoxxxxxxxxxxxomb..
+                                      .bmooxxbbmmmbbxxoomb.
+                                      .bmxx.bbmooombb.xxmb .
+                                 _    bmxox.bmooxoomb.xoxmb.
+            __  _____  _ __ ___ | |__ bxxx.bmoox.xoomb.xxxb.
+            \ \/ / _ \| '_ ` _ \| '_ \xmox.bmox.@.xomb.xomx.
+           _ >  < (_) | | | | | | |_) xmox.bmoox.xoomb.xomx
+          (_)_/\_\___/|_| |_| |_|_.__/bmoox.bmooxoomb.xoombx
+                                     x.bmox.bbmooombb.xomb x
+                                    x .bmoox.bbmmmbb.xoomb  x
+                                    x .bbmoxx..bbb..xxomb   x
+                                    x  .bmoooxx...xxooobb   x
+                                    x   .bbmoooxxxooommb   .x
+                                    x   ..bmmmooooommbb    .
+                                    x     ..bbmmmmmbb      .
+                                    x       ..bbbbbb       .
+                                     x        .           .
+                                     x         .         ..
+                                      x         .        .
+                                      x         .       .
+                                       xx        .     .
+                                        x         .   ..
 
-The README is used to introduce the module and provide instructions on
-how to install the module, any machine dependencies it may have (for
-example C compilers and installed libraries) and any other information
-that should be provided before the module is installed.
+This is a terminal-based game. Assuming that your development tools,
+perl, App::cpanminus, and possibly also local::lib are installed and
+setup, in a suitable terminal install and run the game via:
 
-A README file is required for CPAN modules since CPAN extracts the README
-file from a module distribution so that people browsing the archive
-can use it to get an idea of the module's uses. It is usually a good idea
-to provide version information here so that people can decide whether
-fixes for the module are worth downloading.
+    cpanm Game::Xomb
+    xomb
 
 
-INSTALLATION
-
-To install this module, run the following commands:
-
-	perl Build.PL
-	./Build
-	./Build test
-	./Build install
-
-SUPPORT AND DOCUMENTATION
-
-After installing, you can find documentation for this module with the
-perldoc command.
+There is some documentation about the game:
 
     perldoc Game::Xomb
 
-You can also look for information at:
 
-    RT, CPAN's request tracker (report bugs here)
-        https://rt.cpan.org/NoAuth/Bugs.html?Dist=Game-Xomb
+For the source code, see:
 
-    AnnoCPAN, Annotated CPAN documentation
-        http://annocpan.org/dist/Game-Xomb
-
-    CPAN Ratings
-        https://cpanratings.perl.org/d/Game-Xomb
-
-    Search CPAN
-        https://metacpan.org/release/Game-Xomb
+https://github.com/thrig/Game-Xomb
 
 
-LICENSE AND COPYRIGHT
+This can be built and installed (with dependencies) by running:
 
-This software is Copyright (c) 2020 by Jeremy Mates.
+    git clone https://github.com/thrig/Game-Xomb
+    cd Game-Xomb
+    cpanm .
 
-This is free software, licensed under:
+or without dependencies the manual old fashioned way:
 
-  The (three-clause) BSD License
+    perl Build.PL
+    ./Build
+    ./Build test
+    ./Build install
 
+and new releases may be authored along the lines of:
+
+    git tag -u ... -s
+    git push github master
+    RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build disttest
+    gzip --best Game-Xomb-...
+    cpan-upload ...
