@@ -66,7 +66,11 @@ B<xomb>
 
 =head1 DESCRIPTION
 
-TODO
+B<xomb> is a computer fantasy game. The object of the game is to
+survive the attacks of the fiendish B<Xarci Bedo> and obtain and escape
+with the B<Dragonstone>. Which, despite the name, is actually a
+vegetable. Oh, and for some reason someone has scattered precious gems
+throughout the dungeon. TODO implement gems.
 
 well except the Xarci Bedo doesn't actually exist yet. In this
 game, anyways.
@@ -83,21 +87,39 @@ TODO
 
 TODO
 
+=head2 Symbols
+
+TODO
+
 =head1 DIAGNOSTICS
 
-Various messages may be shown by the Patrouille Kombat Computer (PKC) in
-response to actions taken during the game. Descriptions of some of the
-codes are listed below.
+Various messages may be shown by the Patrol Kombat Computer (PKC) in
+response to command inputs. Details on important codes are listed below.
+The green operations manual contains full details of all codes.
 
 =head2 PKC-0001
 
 A move was made beyond the boundaries of the game. In strict mode this
 would normally result in the immediate termination of the contestant.
 
+=head2 PKC-0002
+
+The command motion control module has encountered a significant obstacle
+and signals that fact with this code.
+
 =head2 PKC-0004
 
-Item retrevial command call failure. User is advised to only use this
-command in a cell that actually contains an item.
+Item retrevial command call failure. User is advised to only use the
+relevant command in a cell that actually contains an item.
+
+=head2 PKC-0005
+
+Inventory stack allocation failure.
+
+=head2 PKC-0024
+
+A significant problem has occured. Consult the green operations manual
+for details.
 
 =head2 PKC-0037
 

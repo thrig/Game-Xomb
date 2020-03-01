@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 
 use 5.24.0;
 use warnings;
@@ -21,28 +21,35 @@ use Time::HiRes qw(gettimeofday sleep tv_interval);
 require XSLoader;
 XSLoader::load('Game::Xomb', $VERSION);
 
+########################################################################
+#
+# CONSTANTS
+
 # ANSI or XTerm control sequences - http://invisible-island.net/xterm/
 #
 # points are col,row (x,y) while terminal uses row,col hence the reverse
-# argument order here
+# argument order here. these two not-CONSTANTS move the cursor around
 sub at              { "\e[" . $_[1] . ';' . $_[0] . 'H' }
 sub at_col          { "\e[" . $_[0] . 'G' }
-sub alt_screen ()   { "\e[?1049h" }
-sub clear_screen () { "\e[1;1H\e[2J" }
-sub clear_right ()  { "\e[K" }
-sub hide_cursor ()  { "\e[?25l" }
-sub hide_pointer () { "\e[>3p" }
-sub show_cursor ()  { "\e[?25h" }
-sub term_norm ()    { "\e[m" }
-sub unalt_screen () { "\e[?1049l" }
+sub ALT_SCREEN ()   { "\e[?1049h" }
+sub CLEAR_SCREEN () { "\e[1;1H\e[2J" }
+sub CLEAR_RIGHT ()  { "\e[K" }
+sub HIDE_CURSOR ()  { "\e[?25l" }     # this gets toggled on/off
+sub HIDE_POINTER () { "\e[>3p" }      # no dead rat in way of things
+sub SHOW_CURSOR ()  { "\e[?25h" }
+sub TERM_NORM ()    { "\e[m" }
+sub UNALT_SCREEN () { "\e[?1049l" }
 
+# no more than this is used of the terminal (hey it's traditional)
 sub MAX_ROWS () { 24 }
 sub MAX_COLS () { 80 }
 
+# where to put the map
 sub MAP_COLS ()     { 78 }
 sub MAP_ROWS ()     { 22 }
 sub MAP_DISP_OFF () { 2 }
 
+# where the message (top) and status (bottom) lines are
 sub MSG_COL ()      { 0 }
 sub MSG_ROW ()      { 0 }
 sub MSG_MAX ()      { MAX_ROWS - 1 }
@@ -54,66 +61,68 @@ sub ERR_CODE_COL () { 70 }
 sub PROW () { 1 }
 sub PCOL () { 0 }
 
-# WHAT Animates and such can be
-sub HERO ()   { 0 }
-sub AMULET () { 1 }
-sub FLOOR ()  { 4 }
-sub WALL ()   { 5 }
-sub COLUMN () { 6 }
-sub GATE ()   { 7 }
+# a point in the LMC so Animates can find where they are at
+sub WHERE () { 0 }
+# GENUS is involved with interactions between things and where the
+# thingy is slotted under the LMC
+sub MINERAL () { 1 }    # walls, floors, etc
+sub VEGGIE ()  { 2 }    # items
+sub ANIMAL ()  { 3 }    # Animates
 
-# for Animates (and also some Things for the first few slots)
-sub WHAT () { 0 }
-sub DISP () { 1 }
-# NOTE that GROUND use TYPE to distinguish between different types of
-# those (FLOOR, GATE, WALL, COLUMN) so something can only look at WHAT
-# for whether motion is possible in that cell; ANI and ITEM instead use
-# TYPE to tell ANI apart from ITEM. TODO maybe fields for solid, opaque
-# like over in prentice but without SQLite?
-sub TYPE ()       { 2 }
-sub STASH ()      { 3 }
-sub UPDATE ()     { 4 }
-sub LMC ()        { 5 }
-sub BLACK_SPOT () { 6 }
-sub ENERGY ()     { 7 }
+# and these are various species
+sub HERO ()   { 0 }     # NOTE also used for Animates slot
+sub AMULET () { 1 }     # goal of the game. technically is a vegetable
+sub COLUMN () { 2 }     # copied from ZAngband, I like how they look
+sub FLOOR ()  { 3 }
+sub GATE ()   { 4 }     # stairs, done in the rogue 3.6 fashion
+sub WALL ()   { 5 }     # regular wall
 
-# player stash items
-sub INVENTORY () { 0 }
+# for Animates (shared with Things for the first few slots)
+sub GENUS ()      { 0 }
+sub SPECIES ()    { 1 }
+sub DISPLAY ()    { 2 }  # how to show 'em on the screen
+sub STASH ()      { 3 }  # kitchen drawer, unique to species that use it
+sub UPDATE ()     { 4 }  # what happens when their turn comes up
+sub LMC ()        { 5 }  # link back to the level map
+sub BLACK_SPOT () { 6 }  # if marked for death
+sub ENERGY ()     { 7 }  # how long until their turn comes up
 
-# for the Level Map Cell (LMC)
-sub WHERE ()  { 0 }
-sub GROUND () { 1 }
-sub ITEM ()   { 2 }
-sub ANI ()    { 3 }
+# player stash slots
+sub LOOT () { 0 }
 
-sub MOVE_LVLUP ()   { -1 }
+sub LOOT_MAX () { MAX_ROWS - 1 } # greedy packrat prevention
+
+sub MOVE_LVLUP ()   { -1 }    # do not change
 sub MOVE_FAILED ()  { 0 }
-sub MOVE_LVLDOWN () { 1 }
+sub MOVE_LVLDOWN () { 1 }     # do not change
 sub MOVE_OK ()      { 2 }
 
+# energy constants
 sub CAN_MOVE ()     { 0 }
 sub DEFAULT_COST () { 10 }
 sub DIAG_COST ()    { 14 }
 sub NLVL_COST ()    { 15 }
 
-our (@Animates, @RedrawA, @RedrawB, $LMap, $Redraw_Delay, $TCols,
-    $TRows);
+our (@Animates, $Draw_Delay, $LMap, @RedrawA, @RedrawB, $TCols, $TRows);
 our $Level      = 1;
-our $Turn_Count = 0;
-our $Time_Spent = 0;
+our $Turn_Count = 0;          # player moves
+our $Time_Spent = 0;          # energy spent
 
 # by way of history '%' is what rogue (version 3.6) uses to display
 # stairs (which really are actualy one-way optional chutes)
+#             GENUS    SPECIES DISPLAY
+# TODO how often is DISPLAY used? can we just stick term-norm after
+# all those calls so not in memory here?
 our %Things = (
-    AMULET, [ AMULET, "\e[1;33;40m,\e[m",        AMULET ],
-    COLUMN, [ WALL,   "\e[0;37;40m\x{2B29}\e[m", COLUMN ],
-    FLOOR,  [ FLOOR,  "\e[2;37;40m.\e[m",        FLOOR ],
-    GATE,   [ FLOOR,  "\e[1;36;40m%\e[m",        GATE ],
-    WALL,   [ WALL,   "\e[0;37;40m#\e[m",        WALL ],
+    AMULET, [ VEGGIE,  AMULET, "\e[1;33;40m," . TERM_NORM ],
+    COLUMN, [ MINERAL, COLUMN, "\e[0;37;40m\x{2B29}" . TERM_NORM ],
+    FLOOR,  [ MINERAL, FLOOR,  "\e[2;37;40m." . TERM_NORM ],
+    GATE,   [ MINERAL, GATE,   "\e[1;36;40m%" . TERM_NORM ],
+    WALL,   [ MINERAL, WALL,   "\e[0;37;40m#" . TERM_NORM ],
 );
 
 # NOTE these must be short as they must all fit in status line and there
-# can be three of them, see move_examine
+# can be three of them; see move_examine
 our %Descript = (
     AMULET, 'Dragonstone', COLUMN, 'Column',
     FLOOR, 'Floor', HERO, 'You', GATE, 'Gate to another level',
@@ -121,10 +130,39 @@ our %Descript = (
 );
 
 # make the hero
-$Animates[HERO]->@[ WHAT, DISP, TYPE, ENERGY, STASH, UPDATE ] =
-  (HERO, "\e[1;37;40m\@\e[m", ANI, CAN_MOVE, [], \&update_hero);
+$Animates[HERO]->@[ GENUS, SPECIES, DISPLAY, ENERGY, STASH, UPDATE ] = (
+    ANIMAL, HERO, "\e[1;37;40m\@" . TERM_NORM,
+    CAN_MOVE, [ [] ], \&update_hero
+);
 
-# for looking around with examine mode
+# handle bumps by GENUS (allow, fisticuffs, etc.) from move_animate
+our %Interact_With = (
+    ANIMAL,
+    sub {
+        my ($mover, $dpoint, $target, $cost) = @_;
+        log_message('TODO fisticuffs');
+        return MOVE_FAILED, $cost;
+    },
+    VEGGIE,
+    sub {
+        my ($mover, $dpoint, $target, $cost) = @_;
+        log_message('DBG nice item here');
+        relocate($mover, $dpoint);
+        return MOVE_OK, $cost;
+    },
+    MINERAL,
+    sub {
+        my ($mover, $dpoint, $target, $cost) = @_;
+        if ($target->[SPECIES] == WALL or $target->[SPECIES] == COLUMN) {
+            return MOVE_FAILED, 0, 'PKC-0002';
+        }
+        log_message('DBG nice floor here');
+        relocate($mover, $dpoint);
+        return MOVE_OK, $cost;
+    },
+);
+
+# for looking around with, see move_examine
 our %Examine_Offsets = (
     'h' => [ -1, +0 ],
     'j' => [ +0, +1 ],
@@ -141,16 +179,17 @@ our %Key_Commands = (
     'g' => \&move_pickup,
     ',' => \&move_pickup,
     'i' => \&show_inventory,
-    'h' => move_player(-1, +0, DEFAULT_COST),    # left
-    'j' => move_player(+0, +1, DEFAULT_COST),    # down
-    'k' => move_player(+0, -1, DEFAULT_COST),    # up
-    'l' => move_player(+1, +0, DEFAULT_COST),    # right
-    'y' => move_player(-1, -1, DIAG_COST),
-    'u' => move_player(+1, -1, DIAG_COST),
-    'b' => move_player(-1, +1, DIAG_COST),
-    'n' => move_player(+1, +1, DIAG_COST),
-    '.' => \&move_nop,                           # rest
-    ' ' => \&move_nop,                           # also rest
+    'h' => move_player_maker(-1, +0, DEFAULT_COST),    # left
+    'j' => move_player_maker(+0, +1, DEFAULT_COST),    # down
+    'k' => move_player_maker(+0, -1, DEFAULT_COST),    # up
+    'l' => move_player_maker(+1, +0, DEFAULT_COST),    # right
+    'y' => move_player_maker(-1, -1, DIAG_COST),
+    'u' => move_player_maker(+1, -1, DIAG_COST),
+    'b' => move_player_maker(-1, +1, DIAG_COST),
+    'n' => move_player_maker(+1, +1, DIAG_COST),
+    # TODO may need to interact with item/floor for status effects etc
+    '.' => \&move_nop,                                 # rest
+    ' ' => \&move_nop,                                 # also rest
     'v' => sub {
         log_message('Xomb v.' . $VERSION . ' PID ' . $$);
         return MOVE_FAILED, 0;
@@ -158,7 +197,7 @@ our %Key_Commands = (
     'x' => \&move_examine,
     '<' => sub {
         log_message('TODO check if have amulet');
-        if ($Animates[HERO][LMC][GROUND][TYPE] != GATE) {
+        if ($Animates[HERO][LMC][MINERAL][SPECIES] != GATE) {
             log_message('not a gate!!');
             return MOVE_FAILED, 0, 'PKC-0037';
         }
@@ -166,7 +205,7 @@ our %Key_Commands = (
         return MOVE_LVLUP, NLVL_COST;
     },
     '>' => sub {
-        if ($Animates[HERO][LMC][GROUND][TYPE] != GATE) {
+        if ($Animates[HERO][LMC][MINERAL][SPECIES] != GATE) {
             log_message('not a gate!!');
             return MOVE_FAILED, 0, 'PKC-0037';
         }
@@ -184,6 +223,7 @@ our %Key_Commands = (
     "\003" => sub {    # <C-c>
                        # DBG
         game_over();
+        # TODO these should be log codes so not spamming messages
         #log_message('Enough with these silly interruptions!');
         #return MOVE_FAILED;
     },
@@ -216,7 +256,7 @@ sub bad_terminal {
 
 sub bail_out {
     restore_term();
-    print "\n", at_col(0), clear_right;
+    print "\n", at_col(0), CLEAR_RIGHT;
     warn $_[0] if @_;
     game_over("The game yet again collapses about you...");
 }
@@ -232,7 +272,7 @@ sub between {
 }
 
 sub boss_screen {
-    print clear_screen, at(0, 2), <<"BOSS_SCREEN", "\n:", show_cursor;
+    print CLEAR_SCREEN, at(0, 2), <<"BOSS_SCREEN", "\n:", SHOW_CURSOR;
 LS(1)                     BSD General Commands Manual                    LS(1)
 
 \e[1mNAME\e[m
@@ -256,14 +296,14 @@ SYNOPSIS
      The following options are available:
 BOSS_SCREEN
     await_quit();
-    print hide_cursor;
+    print HIDE_CURSOR;
     refresh_board();
 }
 
 sub can_win {
-    my $inventory = $Animates[HERO][STASH][INVENTORY] // [];
-    for my $item ($inventory->@*) {
-        return 1 if $item->[TYPE] == AMULET;
+    my $loot = $Animates[HERO][STASH][LOOT];
+    for my $item ($loot->@*) {
+        return 1 if $item->[SPECIES] == AMULET;
     }
     return 0;
 }
@@ -274,7 +314,7 @@ sub can_win {
     my @log;
 
     sub clear_code {
-        print at(ERR_CODE_COL, STATUS_ROW), clear_right;
+        print at(ERR_CODE_COL, STATUS_ROW), CLEAR_RIGHT;
         $code_clear = 1;
     }
     sub clear_messages { @log = () }
@@ -298,24 +338,24 @@ sub can_win {
     sub show_code {
         return if $code_clear or $last_code eq '';
         print at(ERR_CODE_COL, STATUS_ROW), "\e[1;31;40m*", $last_code, '*',
-          term_norm;
+          TERM_NORM;
     }
 
     sub show_messages {
-        print clear_screen, show_cursor, "\e[0;37;40m";
+        print CLEAR_SCREEN, SHOW_CURSOR, "\e[0;37;40m";
         while (my ($i, $msg) = each @log) {
             print at(MSG_COL, MSG_ROW + $i), $msg;
         }
         print at(MSG_COL, MSG_ROW + @log), "-- press Esc to continue --",
-          term_norm;
+          TERM_NORM;
         await_quit();
-        print hide_cursor;
+        print HIDE_CURSOR;
         refresh_board();
     }
 
     sub show_top_message {
         my $msg = @log ? $log[-1] : '';
-        print at(MSG_COL, MSG_ROW), clear_right, "\e[0;37;40m", $msg, term_norm;
+        print at(MSG_COL, MSG_ROW), CLEAR_RIGHT, "\e[0;37;40m", $msg, TERM_NORM;
     }
 }
 
@@ -326,12 +366,12 @@ sub draw_level {
         # TODO may need unicode indicator where ani+item or ani+gate present?
         # or gates are items that interact with items thrown on them?
         for my $lmc ($LMap->[$rownum]->@*) {
-            if (defined $lmc->[ANI]) {
-                $s .= $lmc->[ANI][DISP];
-            } elsif (defined $lmc->[ITEM]) {
-                $s .= $lmc->[ITEM][DISP];
+            if (defined $lmc->[ANIMAL]) {
+                $s .= $lmc->[ANIMAL][DISPLAY];
+            } elsif (defined $lmc->[VEGGIE]) {
+                $s .= $lmc->[VEGGIE][DISPLAY];
             } else {
-                $s .= $lmc->[GROUND][DISP];
+                $s .= $lmc->[MINERAL][DISPLAY];
             }
         }
     }
@@ -352,7 +392,7 @@ sub game_loop {
     game_over('Terminal must be at least ' . MAX_COLS . 'x' . MAX_ROWS)
       if bad_terminal();
 
-    ($Redraw_Delay) = @_;
+    ($Draw_Delay) = @_;
 
     ReadMode 'raw';
     $SIG{$_} = \&bail_out for qw(INT HUP TERM PIPE QUIT USR1 USR2 __DIE__);
@@ -365,7 +405,7 @@ sub game_loop {
 
     generate_level();
 
-    print term_norm, alt_screen, hide_cursor, hide_pointer, clear_screen;
+    print TERM_NORM, ALT_SCREEN, HIDE_CURSOR, HIDE_POINTER, CLEAR_SCREEN;
     paint_black();
     draw_level();
     show_status_bar();
@@ -421,9 +461,9 @@ sub game_over {
     my ($msg, $code) = @_;
     $code //= 1;
     restore_term();
-    print "\n", at_col(0), clear_right, $msg,
+    print "\n", at_col(0), CLEAR_RIGHT, $msg,
       " ($Turn_Count, $Time_Spent)\n",
-      clear_right;
+      CLEAR_RIGHT;
     exit $code;
 }
 
@@ -442,51 +482,41 @@ sub generate_level {
     # DBG KLUGE test out stuff on level map
     my $c = 1;
     my $r = 1;
-    $LMap->[$r][$c][ANI] = $Animates[HERO];
+    $LMap->[$r][$c][ANIMAL] = $Animates[HERO];
     $Animates[HERO][LMC] = $LMap->[$r][$c];
     weaken $Animates[HERO][LMC];
     $c = $r = 2;
-    $LMap->[$r][$c][GROUND] = $Things{ GATE, };
+    $LMap->[$r][$c][MINERAL] = $Things{ GATE, };
 
     if ($Level == 1) {
-        $c                      = $r = 3;
-        $LMap->[$r][$c][GROUND] = $Things{ WALL, };
-        $c                      = $r = 4;
-        $LMap->[$r][$c][GROUND] = $Things{ COLUMN, };
+        $c                       = $r = 3;
+        $LMap->[$r][$c][MINERAL] = $Things{ WALL, };
+        $c                       = $r = 4;
+        $LMap->[$r][$c][MINERAL] = $Things{ COLUMN, };
     } else {
         $c = $r = 5;
-        $LMap->[$r][$c][ITEM] = $Things{ AMULET, };
+        $LMap->[$r][$c][VEGGIE] = $Things{ AMULET, };
     }
-}
-
-sub interact {
-    my ($mover, $dest) = @_;
-    return 0;
-    # TODO will need suitable interactions with stuff...
-    #   for my $i (ANI, ITEM) {
-    #       my $target = $LMap->[ $dest->[PROW] ][ $dest->[PCOL] ][$i];
-    #       if (defined $target) {
-    #           # this code is assumed to take care of everything and be the
-    #           # final say on the interaction
-    #           $Interact_With{ $target->[WHAT] }->($mover, $target);
-    #           return 1;
-    #       }
-    #   }
-    #   return 0;
 }
 
 sub move_animate {
     my ($ent, $cols, $rows, $cost) = @_;
     my $lmc  = $ent->[LMC];
-    my $dest = [ $lmc->[WHERE][PCOL] + $cols, $lmc->[WHERE][PROW] + $rows ];
-    if (   $dest->[PCOL] < 0
-        or $dest->[PCOL] >= MAP_COLS
-        or $dest->[PROW] < 0
-        or $dest->[PROW] >= MAP_ROWS) {
-        return MOVE_FAILED, 0, 'PKC-0001';
+    my $dcol = $lmc->[WHERE][PCOL] + $cols;
+    my $drow = $lmc->[WHERE][PROW] + $rows;
+    return MOVE_FAILED, 0, 'PKC-0001'
+      if $dcol < 0
+      or $dcol >= MAP_COLS
+      or $drow < 0
+      or $drow >= MAP_ROWS;
+    for my $i (ANIMAL, VEGGIE, MINERAL) {
+        my $target = $LMap->[$drow][$dcol][$i];
+        if (defined $target) {
+            @_ = ($ent, [ $dcol, $drow ], $target, $cost);
+            goto $Interact_With{ $target->[GENUS] }->&*;
+        }
     }
-    relocate($ent, $dest) unless interact($ent, $dest);
-    return MOVE_OK, $cost;
+    die "DBG no interaction at $dcol,$drow ??\n";
 }
 
 # TODO will need to honor FOV
@@ -494,18 +524,18 @@ sub move_animate {
 sub move_examine {
     my $row = $Animates[HERO][LMC][WHERE][PROW];
     my $col = $Animates[HERO][LMC][WHERE][PCOL];
-    print at(MSG_COL, MSG_ROW), clear_right, show_cursor,
+    print at(MSG_COL, MSG_ROW), CLEAR_RIGHT, SHOW_CURSOR,
       "\e[0;37;40m-- move cursor to view a cell. Esc exits --";
     while (1) {
         my $s = '';
-        for my $i (ANI, ITEM) {
+        for my $i (ANIMAL, VEGGIE) {
             my $x = $LMap->[$row][$col][$i];
-            $s .= $x->[DISP] . $Descript{ $x->[WHAT] } . ' '
+            $s .= $x->[DISPLAY] . $Descript{ $x->[SPECIES] } . ' '
               if defined $x;
         }
-        my $g = $LMap->[$row][$col][GROUND];
-        $s .= $g->[DISP] . $Descript{ $g->[TYPE] } if defined $g;
-        print at(STATUS_COL, STATUS_ROW), clear_right, $s,
+        my $g = $LMap->[$row][$col][MINERAL];
+        $s .= $g->[DISPLAY] . $Descript{ $g->[SPECIES] } if defined $g;
+        print at(STATUS_COL, STATUS_ROW), CLEAR_RIGHT, $s,
           at(map { MAP_DISP_OFF + $_ } $col, $row);
         my $key = ReadKey(0);
         last if $key eq "\033" or $key eq 'q';
@@ -518,7 +548,7 @@ sub move_examine {
         $row = between(0, MAP_ROWS - 1, $row + $dir->[PROW] * $distance);
         $col = between(0, MAP_COLS - 1, $col + $dir->[PCOL] * $distance);
     }
-    print hide_cursor, term_norm, at(STATUS_COL, STATUS_ROW), clear_right;
+    print HIDE_CURSOR, TERM_NORM, at(STATUS_COL, STATUS_ROW), CLEAR_RIGHT;
     show_top_message();
     show_status_bar();
     return MOVE_FAILED, 0;
@@ -528,16 +558,18 @@ sub move_nop { return MOVE_OK, DEFAULT_COST }
 
 sub move_pickup {
     my $lmc = $Animates[HERO][LMC];
-    if (!defined $lmc->[ITEM]) {
+    if (!defined $lmc->[VEGGIE]) {
         return MOVE_FAILED, 0, 'PKC-0004';
     }
     log_message('got item');
-    push $Animates[HERO][STASH][INVENTORY]->@*, $lmc->[ITEM];
-    $lmc->[ITEM] = undef;
+    my $loot = $Animates[HERO][STASH][LOOT];
+    return MOVE_FAILED, 0, 'PKC-0005' if $loot->@* >= LOOT_MAX;
+    push $loot->@*, $lmc->[VEGGIE];
+    $lmc->[VEGGIE] = undef;
     return MOVE_OK, DEFAULT_COST;
 }
 
-sub move_player {
+sub move_player_maker {
     my ($cols, $rows, $mvcost) = @_;
     sub { move_animate($Animates[HERO], $cols, $rows, $mvcost) }
 }
@@ -547,22 +579,22 @@ sub paint_black {
     for my $r (0 .. $TRows) {
         print at(MSG_COL, $r), "\e[40m", " " x $TCols;
     }
-    print term_norm;
+    print TERM_NORM;
 }
 
 sub redraw_movers {
     my %seen;
   CELL: for my $point (@RedrawA) {
         next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
-        for my $i (ANI, ITEM) {
+        for my $i (ANIMAL, VEGGIE) {
             my $ent = $LMap->[ $point->[PROW] ][ $point->[PCOL] ][$i];
             if (defined $ent and !$ent->[BLACK_SPOT]) {
-                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ent->[DISP];
+                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ent->[DISPLAY];
                 next CELL;
             }
         }
         print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][GROUND][DISP];
+          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
     }
     for my $key (keys %seen) {
         if ($seen{$key} > 1) {
@@ -571,20 +603,20 @@ sub redraw_movers {
     }
     @RedrawA = ();
 
-    sleep($Redraw_Delay);
+    sleep($Draw_Delay);
     %seen = ();
 
   CELL: for my $point (@RedrawB) {
         next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
-        for my $i (ANI, ITEM) {
+        for my $i (ANIMAL, VEGGIE) {
             my $ent = $LMap->[ $point->[PROW] ][ $point->[PCOL] ][$i];
             if (defined $ent and !$ent->[BLACK_SPOT]) {
-                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ent->[DISP];
+                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ent->[DISPLAY];
                 next CELL;
             }
         }
         print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][GROUND][DISP];
+          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
     }
     for my $key (keys %seen) {
         if ($seen{$key} > 1) {
@@ -595,7 +627,7 @@ sub redraw_movers {
 }
 
 sub refresh_board {
-    print clear_screen;
+    print CLEAR_SCREEN;
     draw_level();
     show_top_message();
     show_status_bar();
@@ -607,45 +639,45 @@ sub relocate {
     push @RedrawA, $src;
     push @RedrawB, $dest;
     my $lmc = $LMap->[ $dest->[PROW] ][ $dest->[PCOL] ];
-    $lmc->[ $ent->[TYPE] ] = $ent;
-    undef $LMap->[ $src->[PROW] ][ $src->[PCOL] ][ $ent->[TYPE] ];
+    $lmc->[ANIMAL] = $ent;
+    undef $LMap->[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
     $ent->[LMC] = $lmc;
     weaken $ent->[LMC];
 }
 
 sub restore_term {
     ReadMode 'restore';
-    print term_norm, show_cursor, unalt_screen;
+    print TERM_NORM, SHOW_CURSOR, UNALT_SCREEN;
 }
 
 sub show_inventory {
-    print clear_screen, show_cursor;
-    my $inventory = $Animates[HERO][STASH][INVENTORY] // [];
+    print CLEAR_SCREEN, SHOW_CURSOR;
+    my $loot = $Animates[HERO][STASH][LOOT];
     my $offset;
     my $s = "\e[0;37;40m";
-    if ($inventory->@*) {
-        while (my ($i, $item) = each $inventory->@*) {
+    if ($loot->@*) {
+        while (my ($i, $item) = each $loot->@*) {
             $s .=
                 at(MSG_COL, MSG_ROW + $i)
-              . $item->[DISP] . ' '
-              . $Descript{ $item->[WHAT] };
+              . $item->[DISPLAY] . ' '
+              . $Descript{ $item->[SPECIES] };
         }
-        $offset = $inventory->@* + 1;
+        $offset = $loot->@* + 1;
     } else {
         $s .= at(MSG_COL, MSG_ROW) . "You have nothing in your inventory.";
         $offset = 2;
     }
     print $s, at(MSG_COL, MSG_ROW + $offset), "-- press Esc to continue --",
-      term_norm;
+      TERM_NORM;
     await_quit();
-    print hide_cursor;
+    print HIDE_CURSOR;
     refresh_board();
     return MOVE_FAILED, 0;
 }
 
 sub show_status_bar {
     print at(STATUS_COL, STATUS_ROW), "\e[0;37;40mLevel: ", $Level,
-      term_norm;
+      TERM_NORM;
     # TODO show "HP" maybe other things
     show_code();
 }
