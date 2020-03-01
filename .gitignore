@@ -10,6 +10,7 @@ META.*
 MYMETA.*
 Makefile
 Makefile.old
+TODO
 _build/
 blib/
 cover_db/

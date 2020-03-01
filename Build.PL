@@ -10,15 +10,21 @@ Module::Build->new(
     include_dirs       => ['.'],
     license            => 'bsd',
     needs_compiler     => 1,
-    release_status     => 'stable',                                  # LOL
+    release_status     => 'stable',                                    # LOL
     sign               => 1,
     configure_requires => {
         'CPAN::Meta'    => '2.142060',
         'Module::Build' => '0.4004',     # test_requires
     },
     requires => {
-        'perl'   => '5.24.0',
-        'strict' => 0,
+        'perl'          => '5.24.0',
+        'strict'        => 0,
+        'List::Util'    => 0,
+        'POSIX'         => 0,
+        'Scalar::Util'  => 0,
+        'Term::ReadKey' => 0,
+        'Time::HiRes'   => 0,
+        'XSLoader'      => 0,
     },
     test_requires => {
         'strict'            => 0,

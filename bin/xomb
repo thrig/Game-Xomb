@@ -48,6 +48,9 @@ if (-t STDERR) {
     }
 }
 
+# DBG
+srand 640;
+
 Game::Xomb::game_loop($ddelay);
 exit(1);                                       # NOTREACHED
 
@@ -64,6 +67,9 @@ B<xomb>
 =head1 DESCRIPTION
 
 TODO
+
+well except the Xarci Bedo doesn't actually exist yet. In this
+game, anyways.
 
 =head2 Options
 
@@ -83,10 +89,20 @@ Various messages may be shown by the Patrouille Kombat Computer (PKC) in
 response to actions taken during the game. Descriptions of some of the
 codes are listed below.
 
+=head2 PKC-0001
+
+A move was made beyond the boundaries of the game. In strict mode this
+would normally result in the immediate termination of the contestant.
+
+=head2 PKC-0004
+
+Item retrevial command call failure. User is advised to only use this
+command in a cell that actually contains an item.
+
 =head2 PKC-0037
 
-No gate found. The player has attempted to navigate through a gate where
-none exists.
+No gate found. This indicates that no gate is present in the cell the
+command was attempted in.
 
 =head1 EXIT STATUS
 
