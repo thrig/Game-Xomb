@@ -2,6 +2,8 @@ Build.PL
 Changes
 LICENSE
 MANIFEST
+META.json
+META.yml
 README
 bin/xomb
 lib/Game/Xomb.pm
@@ -11,5 +13,3 @@ ppport.h
 t/00-load.t
 t/pod.t
 t/xomb.t
-META.yml
-META.json

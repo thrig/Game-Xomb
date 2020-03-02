@@ -23,7 +23,16 @@
                                        xx        .     .
                                         x         .   ..
 
-This is a terminal-based game. Assuming that your development tools,
+    Know then on Minos III sacred to Mars
+    do grow the spawn of Cadmus from afar
+
+    as towers tall, monoliths for Clotho
+    to spread as she would. The Xarci Bedo
+
+    we call this foe. Do you now seek the stone
+    below of Dragon born to call your own?
+
+This is a terminal-based roguelike. Assuming that the development tools,
 perl, App::cpanminus, and possibly also local::lib are installed and
 setup, in a suitable terminal install and run the game via:
 
@@ -61,3 +70,5 @@ and new releases may be authored along the lines of:
     RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build disttest
     gzip --best Game-Xomb-...
     cpan-upload ...
+
+listed here as I am forever forgetting the exact commands.
