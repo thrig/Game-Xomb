@@ -34,10 +34,13 @@ SKIP: {
         is $ret, int $ret;
 
         my @ret = map { $fn->($args{$name}->@*) } 1 .. $trials;
-        my ($mean,$min,$max)   = mean(\@ret);
+        my ($mean, $min, $max) = mean(\@ret);
+        my $sd = sd(\@ret, $mean);
+        push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean,
+          $sd, $min, $max;
+
+        # it isn't good to be negative
         ok $min >= 0;
-        my $sd   = sd(\@ret, $mean);
-        push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean, $sd, $min, $max;
     }
     diag "sample damage - mean sd [min,max]:\n", @outcomes;
 }
@@ -46,11 +49,12 @@ sub mean {
     my ($ref) = @_;
     my $N     = $ref->@*;
     my $sum   = 0;
-    my $min = ~0;
-    my $max = -1;
+    my $min   = ~0;
+    my $max   = -1;
     for my $x ($ref->@*) {
         $sum += $x;
-        if ($x < $min) { $min = $x } elsif ($x > $max) { $max = $x }
+        if    ($x < $min) { $min = $x }
+        elsif ($x > $max) { $max = $x }
     }
     return $sum / $N, $min, $max;
 }

@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.07';
+our $VERSION = '0.08';
 
 use 5.24.0;
 use warnings;
@@ -58,6 +58,7 @@ sub AT_CELLOBJS ()   { "\e[24;68H" }
 sub AT_ERR_CODE ()   { "\e[24;72H" }
 
 # how big and where to put the level map
+# NOTE also set in Xomb.xs for map-aware functions
 sub MAP_COLS ()     { 78 }
 sub MAP_ROWS ()     { 22 }
 sub MAP_DISP_OFF () { 2 }
@@ -127,25 +128,11 @@ sub TIME_TO_DIE ()  { 2 }     # turns before quit possible after death
 #
 # VARIABLES
 
-our (@Animates, $Draw_Delay, @LMap, @RedrawA, @RedrawB);
+our (@Animates, @LMap);
 our $Energy_Spent = 0;
 our $GGV          = 0;    # economy regulation index
 our $Level        = 1;    # current level
 our $Turn_Count   = 0;    # player moves
-
-# these are "class objects"; in other words there is only one WALL in
-# all WALL cells unless efforts are taken otherwise (see reify and the
-# make_* routines)
-#
-#             GENUS    SPECIES DISPLAY UPDATE (passive effects)
-our %Things = (
-    ACID,   [ MINERAL, ACID,   '~', \&passive_burn ],
-    FLOOR,  [ MINERAL, FLOOR,  '.' ],
-    GATE,   [ MINERAL, GATE,   '%' ],
-    HOLE,   [ MINERAL, HOLE,   ' ' ],
-    RUBBLE, [ MINERAL, RUBBLE, '^' ],
-    WALL,   [ MINERAL, WALL,   '#' ],
-);
 
 # mostly so that causes of damage are all kept in one (testable) place
 #   cpanm App::Prove
@@ -172,6 +159,20 @@ our %Damage_From = (
         }
         return $damage;
     },
+);
+
+# these are "class objects"; in other words there is only one WALL in
+# all WALL cells unless efforts are taken otherwise (see reify and the
+# make_* routines)
+#
+#             GENUS    SPECIES DISPLAY UPDATE (passive effects)
+our %Things = (
+    ACID,   [ MINERAL, ACID,   '~', \&passive_burn ],
+    FLOOR,  [ MINERAL, FLOOR,  '.' ],
+    GATE,   [ MINERAL, GATE,   '%' ],
+    HOLE,   [ MINERAL, HOLE,   'o' ],
+    RUBBLE, [ MINERAL, RUBBLE, '^' ],
+    WALL,   [ MINERAL, WALL,   '#' ],
 );
 
 # NOTE these must be fairly short as they must all fit in status line
@@ -229,8 +230,7 @@ our %Bump_Into = (
                 log_code('PKC-0099');
                 $ret = MOVE_LVLDOWN;
             } else {
-                # just remove them from play, for now
-                push @RedrawA, $mover->[LMC][WHERE];
+                # remove from play, for now
                 $mover->[BLACK_SPOT] = 1;
             }
             apply_damage($mover, 'falling');
@@ -243,6 +243,63 @@ our %Bump_Into = (
         }
     },
 );
+
+# for FOV see draw_level. derived from Game::RaycastFOV
+#<<<
+our %Edge_Coord = (
+    1 => [
+        [ 1,  0 ], [ 1,  1 ],  [ 0, 1 ],  [ -1, 1 ],
+        [ -1, 0 ], [ -1, -1 ], [ 0, -1 ], [ 1,  -1 ]
+    ],
+2 => [[2,0],[2,1],[1,1],[1,2],[0,2],[-1,2],[-1,1],[-2,1],[-2,0],[-2,-1],[-1,-1] ,[-1,-2],[0,-2],[1,-2],[1,-1],[2,-1]],
+    3 => [
+        [ 3,  0 ],  [ 3,  1 ],  [ 2,  1 ],  [ 2,  2 ],
+        [ 1,  2 ],  [ 1,  3 ],  [ 0,  3 ],  [ -1, 3 ],
+        [ -1, 2 ],  [ -2, 2 ],  [ -2, 1 ],  [ -3, 1 ],
+        [ -3, 0 ],  [ -3, -1 ], [ -2, -1 ], [ -2, -2 ],
+        [ -1, -2 ], [ -1, -3 ], [ 0,  -3 ], [ 1,  -3 ],
+        [ 1,  -2 ], [ 2,  -2 ], [ 2,  -1 ], [ 3,  -1 ]
+    ],
+4 => 
+[[4,0],[4,1],[4,2],[3,2],[3,3],[2,3],[2,4],[1,4],[0,4],[-1,4],[-2,4],[-2,3
+ ],[-3,3],[-3,2],[-4,2],[-4,1],[-4,0],[-4,-1],[-4,-2],[-3,-2],[-3,-3],[-2,-
+ 3],[-2,-4],[-1,-4],[0,-4],[1,-4],[2,-4],[2,-3],[3,-3],[3,-2],[4,-2],[4,-1]
+ ],
+    5 => [
+        [ 5,  0 ],  [ 5,  1 ],  [ 5,  2 ],  [ 4,  2 ],
+        [ 4,  3 ],  [ 3,  3 ],  [ 3,  4 ],  [ 2,  4 ],
+        [ 2,  5 ],  [ 1,  5 ],  [ 0,  5 ],  [ -1, 5 ],
+        [ -2, 5 ],  [ -2, 4 ],  [ -3, 4 ],  [ -3, 3 ],
+        [ -4, 3 ],  [ -4, 2 ],  [ -5, 2 ],  [ -5, 1 ],
+        [ -5, 0 ],  [ -5, -1 ], [ -5, -2 ], [ -4, -2 ],
+        [ -4, -3 ], [ -3, -3 ], [ -3, -4 ], [ -2, -4 ],
+        [ -2, -5 ], [ -1, -5 ], [ 0,  -5 ], [ 1,  -5 ],
+        [ 2,  -5 ], [ 2,  -4 ], [ 3,  -4 ], [ 3,  -3 ],
+        [ 4,  -3 ], [ 4,  -2 ], [ 5,  -2 ], [ 5,  -1 ]
+    ],
+6 => [[6,0],[6,1],[6,2],[5,2],[5,3],[5,4],[4,4],[4,5],[3,5],[2,5],[2,6],[1,6],[
+ 0,6],[-1,6],[-2,6],[-2,5],[-3,5],[-4,5],[-4,4],[-5,4],[-5,3],[-5,2],[-6,2]
+ ,[-6,1],[-6,0],[-6,-1],[-6,-2],[-5,-2],[-5,-3],[-5,-4],[-4,-4],[-4,-5],[-3
+ ,-5],[-2,-5],[-2,-6],[-1,-6],[0,-6],[1,-6],[2,-6],[2,-5],[3,-5],[4,-5],[4,
+ -4],[5,-4],[5,-3],[5,-2],[6,-2],[6,-1]],
+    7 => [
+        [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],
+        [ 6,  3 ],  [ 6,  4 ],  [ 5,  4 ],  [ 5,  5 ],
+        [ 4,  5 ],  [ 4,  6 ],  [ 3,  6 ],  [ 2,  6 ],
+        [ 2,  7 ],  [ 1,  7 ],  [ 0,  7 ],  [ -1, 7 ],
+        [ -2, 7 ],  [ -2, 6 ],  [ -3, 6 ],  [ -4, 6 ],
+        [ -4, 5 ],  [ -5, 5 ],  [ -5, 4 ],  [ -6, 4 ],
+        [ -6, 3 ],  [ -6, 2 ],  [ -7, 2 ],  [ -7, 1 ],
+        [ -7, 0 ],  [ -7, -1 ], [ -7, -2 ], [ -6, -2 ],
+        [ -6, -3 ], [ -6, -4 ], [ -5, -4 ], [ -5, -5 ],
+        [ -4, -5 ], [ -4, -6 ], [ -3, -6 ], [ -2, -6 ],
+        [ -2, -7 ], [ -1, -7 ], [ 0,  -7 ], [ 1,  -7 ],
+        [ 2,  -7 ], [ 2,  -6 ], [ 3,  -6 ], [ 4,  -6 ],
+        [ 4,  -5 ], [ 5,  -5 ], [ 5,  -4 ], [ 6,  -4 ],
+        [ 6,  -3 ], [ 6,  -2 ], [ 7,  -2 ], [ 7,  -1 ]
+    ],
+);
+#>>>
 
 # for looking around with, see move_examine
 our %Examine_Offsets = (
@@ -317,8 +374,6 @@ sub apply_damage {
     $ani->[STASH][HITPOINTS] -= $Damage_From{$cause}->(@rest);
     #warn "HP B for $ani->[SPECIES] $ani->[STASH][HITPOINTS]\n";
     if ($ani->[STASH][HITPOINTS] <= 0) {
-        #use Data::Dumper; warn Dumper $ani; # DBG
-        push @RedrawA, $ani->[LMC][WHERE];
         if ($ani->[SPECIES] == HERO) {
             $ani->[DISPLAY] = '&';                 # the @ got unravelled
             $ani->[UPDATE]  = \&update_gameover;
@@ -398,7 +453,7 @@ sub between {
           "-- press Esc to continue --";
         await_quit();
         print HIDE_CURSOR;
-        refresh_board(scalar @log);
+        refresh_board();
     }
 
     # much of the complication is to dim progressively older information
@@ -431,7 +486,6 @@ sub display_cellobjs {
 sub display_hitpoints {
     my $hp = $Animates[HERO][STASH][HITPOINTS];
     $hp = 0 if $hp < 0;
-    # COSMETIC sentence gen grammer to vary these in Star Trek fashion?
     log_message('Shield module failure.') if $hp == 0;
     my $ticks = int $hp / 2;
     my $hpbar = '=' x $ticks;
@@ -441,28 +495,43 @@ sub display_hitpoints {
     return AT_HPBAR . "SP[\e[1m" . $hpbar . TERM_NORM . ']';
 }
 
+# (expensive) raycast around the player
 sub draw_level {
-    my ($lines) = @_;
-    $lines //= MAP_ROWS;
+    my $sp = $Animates[HERO][LMC][WHERE];
+    my $radius = 4; # player FOV KLUGE put in STASH somewhere
+    my %blocked;
     my $s = '';
-    for my $rownum (0 .. MAP_ROWS - 1) {
-        $s .= at(MAP_DISP_OFF, MAP_DISP_OFF + $rownum) . CLEAR_LINE;
-        for my $lmc ($LMap[$rownum]->@*) {
-            if (defined $lmc->[ANIMAL]) {
-                $s .= $lmc->[ANIMAL][DISPLAY];
-            } elsif (defined $lmc->[VEGGIE]) {
-                $s .= $lmc->[VEGGIE][DISPLAY];
-            } else {
-                $s .= $lmc->[MINERAL][DISPLAY];
-            }
-        }
-        last if $rownum > $lines;
+    for my $r (0 .. MAP_ROWS - 1) {
+        $s .= at_row(MAP_DISP_OFF + $r) . CLEAR_LINE;
     }
-    print $s;
+    for my $ep ($Edge_Coord{$radius}->@*) {
+        linecb(
+            sub {
+                my ($col, $row) = @_;
+                return -1 if $blocked{ $col . ',' . $row };
+                for my $i (ANIMAL, VEGGIE) {
+                    if (defined $LMap[$row][$col][$i]) {
+                        $s .= at(map { MAP_DISP_OFF + $_ } $col, $row)
+                          . $LMap[$row][$col][$i][DISPLAY];
+                        return 0;
+                    }
+                }
+                my $x = $LMap[$row][$col][MINERAL];
+                $s .= at(map { MAP_DISP_OFF + $_ } $col, $row) . $x->[DISPLAY];
+                $blocked{ $col . ',' . $row } = 1 if $x->[SPECIES] == WALL;
+                return 0;
+            },
+            $sp->@*,
+            $sp->[0] + $ep->[0],
+            $sp->[1] + $ep->[1]
+        );
+    }
+    print $s, at(map { MAP_DISP_OFF + $_ } $sp->@*),
+      $LMap[ $sp->[PROW] ][ $sp->[PCOL] ][ANIMAL][DISPLAY];
 }
 
 sub fisher_yates_shuffle {
-    my $array = $_[0];
+    my ($array) = @_;
     my $i;
     for ($i = @$array; --$i;) {
         my $j = int rand($i + 1);
@@ -474,8 +543,6 @@ sub fisher_yates_shuffle {
 sub game_loop {
     game_over('Terminal must be at least ' . NEED_COLS . 'x' . NEED_ROWS)
       if bad_terminal();
-
-    ($Draw_Delay) = @_;
 
     ReadMode 'raw';
     $SIG{$_} = \&bail_out for qw(INT HUP TERM PIPE QUIT USR1 USR2 __DIE__);
@@ -530,7 +597,6 @@ sub game_loop {
             $Level += $new_level;
             has_won() if $Level <= 0;
             generate_level();
-            draw_level();
             # NOTE other half of this is applied in the Bump-into-HOLE
             # logic, elsewhere. this last half happens here as the new
             # level is not yet available prior to the fall
@@ -540,16 +606,9 @@ sub game_loop {
         }
 
       CLEANUP:
-        #*STDERR->print("ANI BEF ");
-        #warn Dumper \@Animates;
         @Animates =
           grep { $_->[BLACK_SPOT] ? undef $_->[LMC][ANIMAL] : 1 } @Animates;
-        # ok after T is indeed removed ... what about LMC for the Troll?
-        #*STDERR->print("ANI AFT ");
-        #warn Dumper \@Animates;
-        #warn "in cleanup...\n";
-        #warn Dumper \@RedrawA, \@RedrawB;
-        redraw_movers();
+        draw_level();
     }
 }
 
@@ -879,7 +938,7 @@ sub manage_inventory {
         }
     }
     print HIDE_CURSOR;
-    refresh_board(MSG_ROW + $offset);
+    refresh_board();
     return MOVE_FAILED, 0;
 }
 
@@ -981,6 +1040,7 @@ sub move_player_maker {
     sub {
         my @ret = move_animate($Animates[HERO], $cols, $rows, $mvcost);
         #warn "DBG COST @ret\n";
+        draw_level();
         print display_cellobjs();
         return @ret;
     }
@@ -1014,69 +1074,16 @@ sub nope_regarding {
     }
 }
 
-sub redraw_movers {
-    my %seen;
-  CELL: for my $point (@RedrawA) {
-        next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
-        for my $i (ANIMAL, VEGGIE) {
-            my $ani = $LMap[ $point->[PROW] ][ $point->[PCOL] ][$i];
-            if (defined $ani and $ani->@*) {
-                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ani->[DISPLAY];
-                next CELL;
-            }
-        }
-        print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
-    }
-    # DBG prolly may happen if X kills Y then Z steps into square, but
-    # that's unlikely given simultaneous moves and post-move cleanup of
-    # the already-dead ent, so move into should cause more bump combat,
-    # not a reloc
-    for my $key (keys %seen) {
-        if ($seen{$key} > 1) {
-            die "DBG STATS point redrawn twice $key $seen{$key}\n";
-        }
-    }
-    @RedrawA = ();
-
-    sleep($Draw_Delay);
-    %seen = ();
-
-  CELL: for my $point (@RedrawB) {
-        next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
-        for my $i (ANIMAL, VEGGIE) {
-            my $ani = $LMap[ $point->[PROW] ][ $point->[PCOL] ][$i];
-            if (defined $ani and $ani->@*) {
-                print at(map { MAP_DISP_OFF + $_ } $point->@*), $ani->[DISPLAY];
-                next CELL;
-            }
-        }
-        print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
-    }
-    for my $key (keys %seen) {
-        if ($seen{$key} > 1) {
-            die "DBG STATS point redrawn twice $key $seen{$key}\n";
-        }
-    }
-    @RedrawB = ();
-}
-
 sub refresh_board {
-    my ($lines) = @_;
-    print CLEAR_SCREEN unless $lines;
-    draw_level($lines);
+    print CLEAR_SCREEN;
+    draw_level();
     show_top_message();
-    show_status_bar()
-      if !defined $lines
-      or ($lines and $lines >= STATUS_ROW);
+    show_status_bar();
 }
 
 sub relocate {
     my ($ani, $dest) = @_;
     my $src = $ani->[LMC][WHERE];
-    push @RedrawA, $src;
-    push @RedrawB, $dest;
     my $dest_lmc = $LMap[ $dest->[PROW] ][ $dest->[PCOL] ];
     $dest_lmc->[ANIMAL] = $ani;
     undef $LMap[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];

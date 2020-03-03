@@ -7,15 +7,12 @@ use warnings;
 use Getopt::Long qw(GetOptions);
 use Game::Xomb;
 
-our ($ddelay, $err, $seed);
-
 GetOptions(
     'help|h|?' => sub {
         warn <<'TLDR';
 Usage: xomb [options]
 
   --err     - send STDERR to this file if not already redirected
-  --ddelay  - draw delay in seconds between moves
   --seed    - set the game seed
   --version - shows xomb version and then quits
 
@@ -30,13 +27,10 @@ and then inspect the log file when things do go awry
 TLDR
         exit 64;
     },
-    'err=s'     => \$err,
-    'ddelay=f'  => \$ddelay,
-    'seed=i'    => \$seed,
+    'err=s'     => \my $err,
+    'seed=i'    => \my $seed,
     'version|v' => sub { say $Game::Xomb::VERSION; exit 1 },
 ) or exit 64;
-
-$ddelay ||= 0.01;
 
 if (-t STDERR) {
     close STDERR;
@@ -51,7 +45,7 @@ if (-t STDERR) {
 }
 
 srand $seed if defined $seed;
-Game::Xomb::game_loop($ddelay);
+Game::Xomb::game_loop;
 exit(1);                                       # NOTREACHED
 
 __END__
@@ -63,7 +57,7 @@ B<xomb> - a game featuring @ versus the Xarci Bedo
 
 =head1 SYNOPSIS
 
-B<xomb> I<--err=file> I<--ddelay=f> I<--seed=i> I<--version>
+B<xomb> I<--err=file> I<--seed=i> I<--version>
 
 =head1 DESCRIPTION
 
@@ -78,11 +72,6 @@ fabled Dragonstone. Which, despite the name, is actually a vegetable.
 =item --err=file
 
 Send STDERR to this file if not already redirected.
-
-=item --ddelay=f
-
-Delay between redraw of from/to motions. Floating point value ideally
-well below 1.0.
 
 =item --seed=i
 
@@ -151,14 +140,11 @@ Acid pond. Probably an OSHA violation.
 
 =item C<.>
 
-An empty cell.
+An empty cell. Generally safe to step in.
 
-=item C< >
+=item C<o>
 
-Holes are represented by an empty space and will drop you to the next
-level, quicker than a gate can do it. Yes, there is a drawback. The edge
-of the level map is also represented (sometimes) with empty spaces, but
-these are not holes.
+Holes will drop you to the next level, quicker than taking a gate.
 
 =back
 
@@ -256,6 +242,7 @@ Jeremy Mates
 =head1 BUGS
 
 B<xomb> assumes that the terminal supports various ANSI or XTerm Control
-Sequences.
+Sequences. Given the time constraints (7DRL 2020) not much portability
+testing has been done.
 
 =cut
