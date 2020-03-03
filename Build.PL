@@ -7,6 +7,7 @@ Module::Build->new(
     dist_abstract      => 'a game featuring @ versus the Xarci Bedo',
     dist_author        => 'Jeremy Mates <jeremy.mates@gmail.com>',
     dist_version_from  => 'lib/Game/Xomb.pm',
+    extra_manify_args  => { utf8 => 1 },
     include_dirs       => ['.'],
     license            => 'bsd',
     needs_compiler     => 1,

@@ -21,8 +21,6 @@
                                       x         .        .
                                       x         .       .
                                        xx        .     .
-                                        x         .   ..
-
     Know then on Minos III sacred to Mars
     do grow the spawn of Cadmus from afar
 
@@ -32,17 +30,16 @@
     we call this foe. Do you now seek the stone
     below of Dragon born to call your own?
 
-This is a terminal-based roguelike. Assuming that the development tools,
+Xomb is a terminal-based roguelike. Assuming that the development tools,
 perl, App::cpanminus, and possibly also local::lib are installed and
 setup, in a suitable terminal install and run the game via:
 
     cpanm Game::Xomb
     xomb
 
+Documentation is available in xomb(1) or by running:
 
-There is some documentation about the game:
-
-    perldoc Game::Xomb
+    perldoc xomb
 
 
 For the source code, see:
@@ -50,7 +47,7 @@ For the source code, see:
 https://github.com/thrig/Game-Xomb
 
 
-This can be built and installed (with dependencies) by running:
+This can be built and installed (chasing dependencies):
 
     git clone https://github.com/thrig/Game-Xomb
     cd Game-Xomb
@@ -70,5 +67,10 @@ and new releases may be authored along the lines of:
     RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build disttest
     gzip --best Game-Xomb-...
     cpan-upload ...
+    ./Build realclean
 
-listed here as I am forever forgetting the exact commands.
+If the same directory is shared between different systems the build tree
+may need to be rebuilt:
+
+    perl Build.PL
+    ./Build realclean
