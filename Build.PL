@@ -29,6 +29,7 @@ Module::Build->new(
     },
     test_requires => {
         'strict'            => 0,
+        'Scalar::Util'      => 0,
         'Test::More'        => '0.88',    # done_testing
         'Test::Most'        => 0,
         'Test::UnixCmdWrap' => 0,

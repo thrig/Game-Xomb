@@ -11,5 +11,6 @@ lib/Game/Xomb.xs
 lib/Game/typemap
 ppport.h
 t/00-load.t
+t/damage-stats.t
 t/pod.t
 t/xomb.t

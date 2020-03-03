@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.06';
+our $VERSION = '0.07';
 
 use 5.24.0;
 use warnings;
@@ -24,8 +24,6 @@ XSLoader::load('Game::Xomb', $VERSION);
 ########################################################################
 #
 # CONSTANTS
-
-sub AMULET_NAME () { 'Dragonstone' }
 
 sub NEED_ROWS () { 24 }
 sub NEED_COLS () { 80 }
@@ -89,6 +87,8 @@ sub ACID ()   { 8 }     # irresistible damage as a service
 sub RUBBLE () { 9 }     # SLOW PROGRESS!!
 sub WALL ()   { 10 }    # regular wall
 
+sub AMULET_NAME () { 'Dragonstone' }
+
 # for ANIMALS (shared with VEGGIES and MINERALS for the first few slots)
 sub GENUS ()      { 0 }
 sub SPECIES ()    { 1 }
@@ -116,12 +116,12 @@ sub MOVE_FAILED ()  { 0 }         # for zero-cost player moves
 sub MOVE_LVLDOWN () { 1 }         # NOTE tied to level change math
 sub MOVE_OKAY ()    { 2 }         # non-level-change costly moves
 
-# energy constants
+# energy constants, see game_loop for the system
 sub CAN_MOVE ()     { 0 }
 sub DEFAULT_COST () { 10 }
 sub DIAG_COST ()    { 14 }
-sub NLVL_COST ()    { 16 }
-sub TIME_TO_DIE ()  { 2 }    # turns before quit possible after death
+sub NLVL_COST ()    { 20 }    # time to gate to next level
+sub TIME_TO_DIE ()  { 2 }     # turns before quit possible after death
 
 ########################################################################
 #
@@ -129,9 +129,9 @@ sub TIME_TO_DIE ()  { 2 }    # turns before quit possible after death
 
 our (@Animates, $Draw_Delay, @LMap, @RedrawA, @RedrawB);
 our $Energy_Spent = 0;
-our $GGV        = 0;         # economy regulation index
-our $Level      = 1;         # current level
-our $Turn_Count = 0;         # player moves
+our $GGV          = 0;    # economy regulation index
+our $Level        = 1;    # current level
+our $Turn_Count   = 0;    # player moves
 
 # these are "class objects"; in other words there is only one WALL in
 # all WALL cells unless efforts are taken otherwise (see reify and the
@@ -147,7 +147,9 @@ our %Things = (
     WALL,   [ MINERAL, WALL,   '#' ],
 );
 
-# mostly so that causes of damage are all kept in one place
+# mostly so that causes of damage are all kept in one (testable) place
+#   cpanm App::Prove
+#   XOMB_STATS=1 prove t/damage-stats.t
 our %Damage_From = (
     acidburn => sub {
         my ($duration) = @_;
@@ -157,16 +159,18 @@ our %Damage_From = (
     },
     attackby => sub {
         my ($ani) = @_;    # the attacker
-        return int(rand 4 + rand 4 + rand 4);
+        return roll(3, 6);
     },
     falling => sub {
-        # COSMETIC this may need to be higher depending on len of game,
-        # healing sources etc
-        if (int(rand 6 + rand 6) == 0) {
-            return 0;
-        } else {
-            return 1 + int rand 6;
+        my $dice   = 1;
+        my $damage = 0;
+        while (1) {
+            my $roll = roll($dice, 4);
+            $damage += $roll;
+            last if $roll <= 2 or $dice > 4;
+            $dice++;
         }
+        return $damage;
     },
 );
 
@@ -254,6 +258,7 @@ our %Examine_Offsets = (
 
 # these define what happens when various keys are mashed
 our %Key_Commands = (
+    'R' => \&move_remove,
     'E' => sub { clear_code(); return MOVE_FAILED, 0 },
     'g' => \&move_pickup,
     ',' => \&move_pickup,
@@ -586,9 +591,9 @@ sub generate_level {
     $LMap[$r][$c][MINERAL] = $Things{ GATE, };
 
     if ($Level == 1) {
-        $c                       = $r = 3;
+        $c                     = $r = 3;
         $LMap[$r][$c][MINERAL] = $Things{ WALL, };
-        $c                       = $r = 4;
+        $c                     = $r = 4;
         $LMap[$r][$c][MINERAL] = $Things{ HOLE, };
     } elsif ($Level == 2) {
         make_amulet(5, 5);
@@ -642,8 +647,7 @@ sub has_amulet {
 sub has_lost {
     restore_term();
     my $score = score();
-    print CLEAR_SCREEN,
-      "Alas, you did not win this time.\n\n$score\n";
+    print CLEAR_SCREEN, "Alas, you did not win this time.\n\n$score\n";
     exit(1);
 }
 
@@ -674,14 +678,14 @@ sub help_screen {
 
      y  k  u     Motion is traditional to rogue(6) as shown in the
       \ | /      compass to the left. Other commands, of which some
-    h - @ - l    take time to complete:
+    h - @ - l    take time to complete, include:
       / | \             
-     b  j  n               . - wait a turn      d - drop item
-                         g , - pick up item     i - show inventory
-    x - examine board    < > - activate gate    M - show messages
-    E - clear error      C-l - redraw screen    ? - show help
-    v - show version     e   - equip a gem
-    
+     b  j  n                . - wait a turn      x - examine board
+                          g , - pick up item     i - show inventory
+    M - show messages     < > - activate gate    e - equip a gem
+    E - clear PKC code    C-l - redraw screen    R - remove a gem
+    ? - show help         v   - show version     d - drop a gem
+
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
     will reject the action. Map symbols include:
@@ -738,7 +742,7 @@ sub make_amulet {
     }
     my $amulet;
     $amulet->@[ GENUS, SPECIES, DISPLAY ] = (VEGGIE, AMULET, ',');
-    $amulet->[STASH][GEM_NAME]  = AMULET_NAME;
+    $amulet->[STASH][GEM_NAME] = AMULET_NAME;
     $GGV += $amulet->[STASH][GEM_VALUE] = 1000;
     # meh, nuke the lowly gem already there
     #die "already a veggie $col,$row??\n" if defined $LMap[$row][$col][VEGGIE];
@@ -751,18 +755,18 @@ sub make_gem {
     my ($name, $value);
     if (int rand 16 == 0) {
         $name  = "Bloodstone";
-        $value = 83 + int(rand 6 + rand 6 + rand 6);
+        $value = 80 + roll(4, 10);
     } elsif (int rand 8 == 0) {
         $name  = "Sunstone";
-        $value = 43 + int(rand 8 + rand 8 + rand 8);
+        $value = 40 + roll(2, 10);
     } else {
         $name  = "Moonstone";
-        $value = 12 + int(rand 10 + rand 10);
+        $value = 10 + roll(2, 10);
     }
     my @adj = qw/Imperial Mystic Rose Smoky Warped/;
     if (int rand 3 == 0) {
         $name = $adj[ rand @adj ] . ' ' . $name;
-        $value += 31 + int rand 30;
+        $value += 10 + roll(2, 20);
     }
     my $gem;
     $gem->@[ GENUS, SPECIES, DISPLAY ] = (VEGGIE, GEM, '*');
@@ -814,7 +818,8 @@ sub manage_inventory {
                 at_row(MSG_ROW + $i)
               . CLEAR_RIGHT
               . $label++ . ') '
-              . $item->[DISPLAY] . ' ' . veggie_name($item);
+              . $item->[DISPLAY] . ' '
+              . veggie_name($item);
         }
         $offset = $loot->@*;
     } else {
@@ -957,7 +962,11 @@ sub move_pickup {
     return MOVE_FAILED, 0, 'PKC-0101' unless defined $lmc->[VEGGIE];
     my $loot = $Animates[HERO][STASH][LOOT];
     return MOVE_FAILED, 0, 'PKC-0102' if $loot->@* >= LOOT_MAX;
-    log_message('Picked up ' . veggie_name($lmc->[VEGGIE]));
+    if ($lmc->[VEGGIE][SPECIES] == AMULET) {
+        log_message('Obtained ' . AMULET_NAME . '! Ascend to win!');
+    } else {
+        log_message('Picked up ' . veggie_name($lmc->[VEGGIE]));
+    }
     push $loot->@*, $lmc->[VEGGIE];
     $lmc->[VEGGIE] = undef;
     print display_cellobjs();
@@ -975,6 +984,16 @@ sub move_player_maker {
         print display_cellobjs();
         return @ret;
     }
+}
+
+sub move_remove {
+    return MOVE_FAILED, 0, 'PKC-0113'
+      unless defined $Animates[HERO][STASH][SHIELDUP];
+    my $loot = $Animates[HERO][STASH][LOOT];
+    return MOVE_FAILED, 0, 'PKC-0102' if $loot->@* >= LOOT_MAX;
+    push $loot->@*, $Animates[HERO][STASH][SHIELDUP];
+    undef $Animates[HERO][STASH][SHIELDUP];
+    return MOVE_FAILED, 0;
 }
 
 sub move_use {
@@ -1070,6 +1089,13 @@ sub restore_term {
     print TERM_NORM, SHOW_CURSOR, UNALT_SCREEN;
 }
 
+sub roll {
+    my ($times, $sides) = @_;
+    my $sum = $times;
+    $sum += int rand $sides while $times-- > 0;
+    return $sum;
+}
+
 sub rubble_delay {
     my ($ani, $cost) = @_;
     #warn "in RUBBLE yo\n";
@@ -1088,7 +1114,8 @@ sub rubble_delay {
 
 sub score {
     my $score = loot_value();
-    return "Score: $score in $Turn_Count turns and $Energy_Spent energy use";
+    return
+      "Score: $score in $Turn_Count turns and $Energy_Spent energy use";
 }
 
 # COSMETIC inline display_ calls here for speeds?
@@ -1185,7 +1212,7 @@ sub update_player {
     }
     if (defined $Animates[HERO][STASH][SHIELDUP]
         and $Animates[HERO][STASH][HITPOINTS] < START_HP) {
-        my $need = START_HP - $Animates[HERO][STASH][HITPOINTS];
+        my $need  = START_HP - $Animates[HERO][STASH][HITPOINTS];
         my $offer = between(
             0,
             int($cost / 3),    # max heal rate over "time"
