@@ -40,20 +40,22 @@ sub TERM_NORM ()    { "\e[m" }
 sub UNALT_SCREEN () { "\e[?1049l" }
 
 # these not-CONSTANT move the cursor around. points are col,row (x,y)
-# while terminal uses row,col hence the reverse argument order here
+# while terminal uses row,col hence the reverse argument order here.
+# some at(...) calls have been made into AT_* constants for frequently
+# used locations
 sub at     { "\e[" . $_[1] . ';' . $_[0] . 'H' }
 sub at_row { "\e[" . $_[0] . ';1H' }
 sub at_col { "\e[" . $_[0] . 'G' }
 
 # where the message (top) and status (bottom) lines are
-sub AT_MSG_ROW ()    { "\e[1;1H" }
 sub MSG_ROW ()       { 1 }
+sub AT_MSG_ROW ()    { "\e[1;1H" }
 sub MSG_MAX ()       { NEED_ROWS - 2 }
 sub STATUS_ROW ()    { 24 }
 sub AT_STATUS_ROW () { "\e[24;1H" }
-sub CELL_HP_COL ()   { 14 }
-sub CELL_INFO_COL () { 68 }
-sub ERR_CODE_COL ()  { 72 }
+sub AT_HPBAR ()      { "\e[24;14H" }
+sub AT_CELLOBJS ()   { "\e[24;68H" }
+sub AT_ERR_CODE ()   { "\e[24;72H" }
 
 # how big and where to put the level map
 sub MAP_COLS ()     { 78 }
@@ -190,7 +192,7 @@ our %Bump_Into = (
         # try not to fight while in an acid pond? of course any dungeon
         # master worth their salt would immediately build railgun towers
         # surrounded by acid ponds...
-        $cost += rubble_delay($cost)
+        $cost += rubble_delay($mover, $cost)
           if $mover->[LMC][MINERAL][SPECIES] == RUBBLE;
         apply_passives($mover, $cost, 0);
         return MOVE_OK, $cost;
@@ -203,7 +205,7 @@ our %Bump_Into = (
         # that acid pond that they are in:
         #   "Yes, we really hate players, damn their guts."
         #     -- Dungeon Crawl Stone Soup, cloud.cc
-        $cost += rubble_delay($cost) if $target->[SPECIES] == RUBBLE;
+        $cost += rubble_delay($mover, $cost) if $target->[SPECIES] == RUBBLE;
         if ($target->[SPECIES] == HOLE) {
             return MOVE_FAILED, 0
               if nope_regarding("Falling may cause damage");
@@ -300,7 +302,7 @@ sub apply_damage {
     $ani->[STASH][HITPOINTS] -= $Damage_From{$cause}->(@rest);
     #warn "HP B for $ani->[SPECIES] $ani->[STASH][HITPOINTS]\n";
     if ($ani->[STASH][HITPOINTS] <= 0) {
-use Data::Dumper; warn Dumper $ani;
+        #use Data::Dumper; warn Dumper $ani; # DBG
         push @RedrawA, $ani->[LMC][WHERE];
         if ($ani->[SPECIES] == HERO) {
             $ani->[DISPLAY] = '&';                 # the @ got unravelled
@@ -309,8 +311,6 @@ use Data::Dumper; warn Dumper $ani;
             # KLUGE assume source of damage was the player, otherwise
             # would need to always have a source object in @rest to
             # peek at...
-# TODO why getting a "." overwrite of Y in You? is that the ground being
-# drawn there from LMC?
             log_message('You destroy the ' . $Descript{ $ani->[SPECIES] });
             $ani->[BLACK_SPOT] = 1;
         }
@@ -391,9 +391,9 @@ BOSS_SCREEN
     my @log;
     my $mcount = 0;
 
-    sub clear_code     { print at(ERR_CODE_COL, STATUS_ROW), CLEAR_RIGHT }
+    sub clear_code     { print AT_ERR_CODE, CLEAR_RIGHT }
     sub clear_messages { @log = () }
-    sub log_code       { print at(ERR_CODE_COL, STATUS_ROW), $_[0] }
+    sub log_code       { print AT_ERR_CODE, $_[0] }
 
     sub log_message {
         my ($message) = @_;
@@ -433,16 +433,14 @@ BOSS_SCREEN
     }
 }
 
-# so player can see what else is in cell, top to bottom to match the
-# examine ordering
+# so can see what else is in cell, ordering matches that of examine sub
 sub display_cellobjs {
-    my $s = at(CELL_INFO_COL, STATUS_ROW) . '[';
+    my $s = AT_CELLOBJS . '[';
     for my $i (VEGGIE, MINERAL) {
         my $obj = $Animates[HERO][LMC][$i];
         $s .= (defined $obj and $obj->@*) ? $obj->[DISPLAY] : ' ';
     }
-    $s .= ']';
-    return $s;
+    return $s . ']';
 }
 
 sub display_hitpoints {
@@ -455,7 +453,7 @@ sub display_hitpoints {
     $hpbar .= '-' if $ticks & 1;
     my $len = length $hpbar;
     $hpbar .= ' ' x (50 - $len) if $len < 50;
-    at(CELL_HP_COL, STATUS_ROW) . "SP[\e[1m" . $hpbar . TERM_NORM . ']';
+    return AT_HPBAR . "SP[\e[1m" . $hpbar . TERM_NORM . ']';
 }
 
 sub draw_level {
@@ -563,11 +561,11 @@ sub game_loop {
         #warn Dumper \@Animates;
         @Animates =
           grep { $_->[BLACK_SPOT] ? undef $_->[LMC][ANIMAL] : 1 } @Animates;
-# ok after T is indeed removed ... what about LMC for the Troll?
+        # ok after T is indeed removed ... what about LMC for the Troll?
         #*STDERR->print("ANI AFT ");
         #warn Dumper \@Animates;
-    warn "in cleanup...\n";
-        warn Dumper \@RedrawA, \@RedrawB;
+        #warn "in cleanup...\n";
+        #warn Dumper \@RedrawA, \@RedrawB;
         redraw_movers();
     }
 }
@@ -875,7 +873,8 @@ sub move_pickup {
     $lmc->[VEGGIE] = undef;
     print display_cellobjs();
     my $cost = DEFAULT_COST;
-    $cost += rubble_delay($cost) if $lmc->[MINERAL][SPECIES] == RUBBLE;
+    $cost += rubble_delay($Animates[HERO], $cost)
+      if $lmc->[MINERAL][SPECIES] == RUBBLE;
     return MOVE_OK, $cost;
 }
 
@@ -883,7 +882,7 @@ sub move_player_maker {
     my ($cols, $rows, $mvcost) = @_;
     sub {
         my @ret = move_animate($Animates[HERO], $cols, $rows, $mvcost);
-        warn "DBG COST @ret\n";
+        #warn "DBG COST @ret\n";
         print display_cellobjs();
         return @ret;
     }
@@ -914,6 +913,10 @@ sub redraw_movers {
         print at(map { MAP_DISP_OFF + $_ } $point->@*),
           $LMap->[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
     }
+    # DBG prolly may happen if X kills Y then Z steps into square, but
+    # that's unlikely given simultaneous moves and post-move cleanup of
+    # the already-dead ent, so move into should cause more bump combat,
+    # not a reloc
     for my $key (keys %seen) {
         if ($seen{$key} > 1) {
             die "DBG STATS point redrawn twice $key $seen{$key}\n";
@@ -972,14 +975,19 @@ sub restore_term {
 }
 
 sub rubble_delay {
-    my ($cost) = @_;
-    warn "in RUBBLE yo\n";
+    my ($ani, $cost) = @_;
+    #warn "in RUBBLE yo\n";
     my $mod = 0;
     if (int rand 4 == 0) {
-        log_message('Slow progress!');
-        $mod = $cost / 2;
+        if ($ani->[SPECIES] == HERO) {
+            # Ultima IV does this. too annoying?
+            # TODO probably want cli flag for this if keep it
+            sleep(0.01 + rand() / 3);
+            log_message('Slow progress!');
+        }
+        $mod = $cost / 2 + 1 + int rand 4;
     }
-    return $mod;    # added to overall cost
+    return $mod;    # to be added to the overall cost
 }
 
 # COSMETIC inline display_ calls here for speeds?
@@ -992,8 +1000,9 @@ sub show_status_bar {
 
 sub passive_burn {
     my ($ani, $obj, $duration, $newcell) = @_;
-    warn "DBG ACID duration $duration\n";
+    #warn "DBG ACID duration $duration\n";
     log_code('PKC-007E') if $ani->[SPECIES] == HERO;
+    # TUNING about 20 turns to die from sitting in acid? is that too high?
     apply_damage($ani, 'acidburn', $duration);
 }
 
@@ -1001,8 +1010,7 @@ sub passive_msg_maker {
     my ($message, $oneshot) = @_;
     sub {
         my ($ani, $obj, $duration, $newcell) = @_;
-        warn sprintf "APAMM %s %d,%d\n", $ani->[DISPLAY],
-          $ani->[LMC][WHERE]->@*;
+        #warn sprintf "APAMM %s %d,%d\n", $ani->[DISPLAY], $ani->[LMC][WHERE]->@*;
         if ($newcell) {
             log_message($message);
             undef $obj->[UPDATE] if $oneshot;
