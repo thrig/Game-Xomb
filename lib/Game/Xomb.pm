@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 use 5.24.0;
 use warnings;
@@ -25,6 +25,8 @@ XSLoader::load('Game::Xomb', $VERSION);
 #
 # CONSTANTS
 
+sub AMULET_NAME () { 'Dragonstone' }
+
 sub NEED_ROWS () { 24 }
 sub NEED_COLS () { 80 }
 
@@ -39,7 +41,7 @@ sub SHOW_CURSOR ()  { "\e[?25h" }
 sub TERM_NORM ()    { "\e[m" }
 sub UNALT_SCREEN () { "\e[?1049l" }
 
-# these not-CONSTANT move the cursor around. points are col,row (x,y)
+# these not-CONSTANTs move the cursor around. points are col,row (x,y)
 # while terminal uses row,col hence the reverse argument order here.
 # some at(...) calls have been made into AT_* constants for frequently
 # used locations
@@ -76,15 +78,16 @@ sub ANIMAL ()  { 3 }    # Animates
 
 # SPECIES
 sub HERO ()   { 0 }     # NOTE also used for @Animates slot
-sub AMULET () { 1 }     # goal of the game. technically is a vegetable
-sub FLOOR ()  { 2 }
-sub GATE ()   { 3 }     # stairs, rogue 3.6 style
-sub WALL ()   { 4 }     # regular wall
-sub GEM ()    { 5 }
-sub HOLE ()   { 6 }     # quicker than gate but causes damage
-sub TROLL ()  { 7 }
-sub ACID ()   { 8 }
-sub RUBBLE () { 9 }
+sub GHAST ()  { 1 }
+sub TROLL ()  { 2 }
+sub AMULET () { 3 }     # goal of the game. technically is a vegetable
+sub GEM ()    { 4 }     # and so are these
+sub HOLE ()   { 5 }     # quicker than a gate but has downsides
+sub FLOOR ()  { 6 }
+sub GATE ()   { 7 }     # stairs, rogue 3.6 style
+sub ACID ()   { 8 }     # irresistible damage as a service
+sub RUBBLE () { 9 }     # SLOW PROGRESS!!
+sub WALL ()   { 10 }    # regular wall
 
 # for ANIMALS (shared with VEGGIES and MINERALS for the first few slots)
 sub GENUS ()      { 0 }
@@ -98,16 +101,20 @@ sub ENERGY ()     { 7 }    # how long until their next update call
 
 # Animates stash slots
 sub HITPOINTS () { 0 }
-sub LOOT ()      { 1 }
-sub ECOST ()     { 2 }
+sub ECOST ()     { 1 }     # cost of last move made
+sub LOOT ()      { 2 }     # inventory
+sub SHIELDUP ()  { 3 }     # a gem can recharge the shield
+# GEM stash slots
+sub GEM_NAME ()  { 0 }
+sub GEM_VALUE () { 1 }
 
 sub START_HP () { 100 }           # see Damage_From and related
 sub LOOT_MAX () { NEED_ROWS - 2 } # avoids scrolling, status bar wipeout
 
 sub MOVE_LVLUP ()   { -1 }        # NOTE tied to level change math
-sub MOVE_FAILED ()  { 0 }
+sub MOVE_FAILED ()  { 0 }         # for zero-cost player moves
 sub MOVE_LVLDOWN () { 1 }         # NOTE tied to level change math
-sub MOVE_OK ()      { 2 }
+sub MOVE_OKAY ()    { 2 }         # non-level-change costly moves
 
 # energy constants
 sub CAN_MOVE ()     { 0 }
@@ -116,19 +123,23 @@ sub DIAG_COST ()    { 14 }
 sub NLVL_COST ()    { 16 }
 sub TIME_TO_DIE ()  { 2 }    # turns before quit possible after death
 
-our (@Animates, $Draw_Delay, $LMap, @RedrawA, @RedrawB);
-our $Level      = 1;
-our $Turn_Count = 0;         # player moves
-our $Time_Spent = 0;         # energy spent
+########################################################################
+#
+# VARIABLES
 
-# these are "class objects" by default; in other words there is only one
-# WALL in all WALL cells unless efforts are taken otherwise (see reify
-# and the make_* routines)
+our (@Animates, $Draw_Delay, @LMap, @RedrawA, @RedrawB);
+our $Energy_Spent = 0;
+our $GGV        = 0;         # economy regulation index
+our $Level      = 1;         # current level
+our $Turn_Count = 0;         # player moves
+
+# these are "class objects"; in other words there is only one WALL in
+# all WALL cells unless efforts are taken otherwise (see reify and the
+# make_* routines)
 #
 #             GENUS    SPECIES DISPLAY UPDATE (passive effects)
 our %Things = (
     ACID,   [ MINERAL, ACID,   '~', \&passive_burn ],
-    AMULET, [ VEGGIE,  AMULET, ',' ],
     FLOOR,  [ MINERAL, FLOOR,  '.' ],
     GATE,   [ MINERAL, GATE,   '%' ],
     HOLE,   [ MINERAL, HOLE,   ' ' ],
@@ -145,7 +156,6 @@ our %Damage_From = (
         return $burn;
     },
     attackby => sub {
-        # TODO put their damage function into their STASH?
         my ($ani) = @_;    # the attacker
         return int(rand 4 + rand 4 + rand 4);
     },
@@ -164,10 +174,11 @@ our %Damage_From = (
 # and there can be three of them; see move_examine
 our %Descript = (
     ACID,   'shallow acid pool',
-    AMULET, 'Dragonstone',
+    AMULET, AMULET_NAME,
     FLOOR,  'floor',
     GATE,   'Stair to next level',
     GEM,    'Gemstone',
+    GHAST,  'Gatling autocannon array',
     HERO,   'You',
     HOLE,   'a hole in the ground',
     RUBBLE, 'some rubble',
@@ -182,9 +193,7 @@ our %Bump_Into = (
     ANIMAL,
     sub {
         my ($mover, $dpoint, $target, $cost) = @_;
-        # TODO improve combat with found items or something, or
-        # different enemy types lower to-hit odds somehow, but E_TIME
-        if (int rand 2 == 0) {
+        if (int rand 10 < 8) {
             apply_damage($target, 'attackby', $mover);
         } else {
             log_code('PKC-0302') if $mover->[SPECIES] == HERO;
@@ -195,7 +204,7 @@ our %Bump_Into = (
         $cost += rubble_delay($mover, $cost)
           if $mover->[LMC][MINERAL][SPECIES] == RUBBLE;
         apply_passives($mover, $cost, 0);
-        return MOVE_OK, $cost;
+        return MOVE_OKAY, $cost;
     },
     MINERAL,
     sub {
@@ -210,7 +219,7 @@ our %Bump_Into = (
             return MOVE_FAILED, 0
               if nope_regarding("Falling may cause damage");
             apply_passives($mover, $cost / 2, 0);
-            my $ret = MOVE_OK;
+            my $ret = MOVE_OKAY;
             if ($mover->[SPECIES] == HERO) {
                 log_message('You plunge into the hole.');
                 log_code('PKC-0099');
@@ -226,7 +235,7 @@ our %Bump_Into = (
             apply_passives($mover, $cost / 2, 0);
             relocate($mover, $dpoint);
             apply_passives($mover, $cost / 2, 1);
-            return MOVE_OK, $cost;
+            return MOVE_OKAY, $cost;
         }
     },
 );
@@ -245,7 +254,7 @@ our %Examine_Offsets = (
 
 # these define what happens when various keys are mashed
 our %Key_Commands = (
-    'e' => sub { clear_code(); return MOVE_FAILED, 0 },
+    'E' => sub { clear_code(); return MOVE_FAILED, 0 },
     'g' => \&move_pickup,
     ',' => \&move_pickup,
     'i' => \&manage_inventory,
@@ -260,13 +269,14 @@ our %Key_Commands = (
     'n' => move_player_maker(+1, +1, DIAG_COST),
     '.' => \&move_nop,                                    # rest
     ' ' => \&move_nop,                                    # also rest
+    'e' => \&move_use,
     'v' => sub { log_message('xomb ' . $VERSION); return MOVE_FAILED, 0 },
     'x' => \&move_examine,
     '<' => sub {
         return MOVE_FAILED, 0, 'PKC-0004'
           if $Animates[HERO][LMC][MINERAL][SPECIES] != GATE;
         unless (has_amulet()) {
-            log_message('You need the Dragonstone to escape.') if $Level == 1;
+            log_message('You need the ' . AMULET_NAME . ' to ascend.');
             return MOVE_FAILED, 0, 'PKC-0010';
         }
         log_message('Gate activated.');
@@ -279,16 +289,16 @@ our %Key_Commands = (
         return MOVE_LVLDOWN, NLVL_COST;
     },
     '?' => sub { help_screen();   return MOVE_FAILED, 0 },
-    'G' => sub { boss_screen();   return MOVE_FAILED, 0 },
+    'G' => sub { hide_screen();   return MOVE_FAILED, 0 },    # Gerente
     'M' => sub { show_messages(); return MOVE_FAILED, 0 },
-    'q' => sub { game_over('Be seeing you...') },
-    'Q' => sub { game_over('Be seeing you...') },
-    "\003" => sub { return MOVE_FAILED, 0, 'PKC-1203' },    # <C-c>
-    "\014" => sub {                                         # <C-l>
+    'q'    => sub { game_over('Be seeing you...') },          # DBG
+    'Q'    => sub { game_over('Be seeing you...') },          # DBG
+    "\003" => sub { return MOVE_FAILED, 0, 'PKC-1203' },      # <C-c>
+    "\014" => sub {                                           # <C-l>
         refresh_board();
         return MOVE_FAILED, 0;
     },
-    "\032" => sub { return MOVE_FAILED, 0, 'PKC-1220' },    # <C-z>
+    "\032" => sub { return MOVE_FAILED, 0, 'PKC-1220' },      # <C-z>
     "\033" => sub { return MOVE_FAILED, 0 },
 );
 
@@ -344,7 +354,7 @@ sub bail_out {
     restore_term();
     print "\n", at_col(0), CLEAR_LINE;
     warn $_[0] if @_;
-    game_over("The game yet again collapses about you...");
+    game_over('The game yet again collapses about you.');   # DBG change rel
 }
 
 sub between {
@@ -355,36 +365,6 @@ sub between {
         $value = $max;
     }
     return $value;
-}
-
-# something something Panopticon
-sub boss_screen {
-    print CLEAR_SCREEN, at(1, 2), <<"BOSS_SCREEN", "\n:", SHOW_CURSOR;
-LS(1)                     BSD General Commands Manual                    LS(1)
-
-\e[1mNAME\e[m
-     \e[1mls\e[m -- list directory contents
-
-SYNOPSIS
-     \e[1mls\e[m [-\e[1mABCFGHLOPRSTUW\@abcdefghiklmnopqrstuwx1\e[m] [\e[4mfile\e[m \e[4m...\e[m]
-
-\e[1mDESCRIPTION\e[m
-     For each operand that names a \e[4mfile\e[m of a type other than directory, ls
-     displays its name as well as any requested, associated information.  For
-     each operand that names a \e[4mfile\e[m of type directory, \e[1mls\e[m displays the names
-     of files contained within that directory, as well as any requested, asso-
-     ciated information.
-
-     If no operands are given, the contents of the current directory are dis-
-     played.  If more than one operand is given, non-directory operands are
-     displayed first; directory and non-directory operands are sorted sepa-
-     rately and in lexicographical order.
-
-     The following options are available:
-BOSS_SCREEN
-    await_quit();
-    print HIDE_CURSOR;
-    refresh_board();
 }
 
 {
@@ -462,7 +442,7 @@ sub draw_level {
     my $s = '';
     for my $rownum (0 .. MAP_ROWS - 1) {
         $s .= at(MAP_DISP_OFF, MAP_DISP_OFF + $rownum) . CLEAR_LINE;
-        for my $lmc ($LMap->[$rownum]->@*) {
+        for my $lmc ($LMap[$rownum]->@*) {
             if (defined $lmc->[ANIMAL]) {
                 $s .= $lmc->[ANIMAL][DISPLAY];
             } elsif (defined $lmc->[VEGGIE]) {
@@ -511,8 +491,7 @@ sub game_loop {
     show_status_bar();
 
   GLOOP: while (1) {
-        my $min_cost = min map { $_->[ENERGY] } @Animates;
-        $Time_Spent += $min_cost;
+        my $min_cost = min(map { $_->[ENERGY] } @Animates);
         #warn('DBG min energy ' . $min_cost . "\n");
 
         my @movers;
@@ -544,8 +523,7 @@ sub game_loop {
 
         if ($new_level != 0) {
             $Level += $new_level;
-            # COSMETIC actual victory screen, score, etc
-            game_over('Congratulations! You did not die.', 0) if $Level <= 0;
+            has_won() if $Level <= 0;
             generate_level();
             draw_level();
             # NOTE other half of this is applied in the Bump-into-HOLE
@@ -570,59 +548,60 @@ sub game_loop {
     }
 }
 
+# DBG mostly for abnormal exits such as uncaught signal or internal error
 sub game_over {
-    my ($message, $code) = @_;
-    $code //= 1;
+    my ($message) = @_;
     restore_term();
-    print "\n", at_col(0), CLEAR_LINE, $message,
-      " ($Turn_Count, $Time_Spent)\n",
-      CLEAR_RIGHT;
-    exit $code;
+    print "\n", at_col(0), CLEAR_LINE, $message, "\n", CLEAR_LINE;
+    exit(1);
 }
 
+# "somos comparables al hechicero que teje un laberinto y que se ve
+# forzado a errar en él hasta el fin de sus días"
+#   -- Borges, Deutsches Requiem
 sub generate_level {
     splice @Animates, 1;
     undef $Animates[HERO][LMC];
-    $LMap = [];
+    @LMap = ();
 
     for my $r (0 .. MAP_ROWS - 1) {
         for my $c (0 .. MAP_COLS - 1) {
             my $point = [ $c, $r ];    # PCOL, PROW (x, y)
-            push $LMap->[$r]->@*, [ $point, $Things{ FLOOR, } ];
-            make_gem($c, $r) if rand() < 0.05;
+            push $LMap[$r]->@*, [ $point, $Things{ FLOOR, } ];
+            # NOTE on level destruct may need to tally how much of the
+            # GGV the player left on the floor, as they do not have that
+            # to heal with (or include in forecast that GGV is a high
+            # watermark, player probably has less)
+            make_gem($c, $r) if rand() < 0.01;
         }
     }
 
     # DBG KLUGE test out stuff on level map
     my $c = 1;
     my $r = 1;
-    $LMap->[$r][$c][ANIMAL] = $Animates[HERO];
-    $Animates[HERO][LMC] = $LMap->[$r][$c];
+    $LMap[$r][$c][ANIMAL] = $Animates[HERO];
+    $Animates[HERO][LMC] = $LMap[$r][$c];
     weaken($Animates[HERO][LMC]);
     $c = $r = 2;
-    $LMap->[$r][$c][MINERAL] = $Things{ GATE, };
+    $LMap[$r][$c][MINERAL] = $Things{ GATE, };
 
-    # TODO level gen will need to figure out where the player is and
-    # make that square part of the pathable map (or allow digging...)
-    # this thing resets their position due to above setup; ideally new
-    # level should preserve vertical harmony with position above
     if ($Level == 1) {
         $c                       = $r = 3;
-        $LMap->[$r][$c][MINERAL] = $Things{ WALL, };
+        $LMap[$r][$c][MINERAL] = $Things{ WALL, };
         $c                       = $r = 4;
-        $LMap->[$r][$c][MINERAL] = $Things{ HOLE, };
-    } elsif (!has_amulet()) {
-        $c = $r = 5;
-        $LMap->[$r][$c][VEGGIE] = $Things{ AMULET, };
+        $LMap[$r][$c][MINERAL] = $Things{ HOLE, };
+    } elsif ($Level == 2) {
+        make_amulet(5, 5);
     }
 
-    $LMap->[0][7][MINERAL] = $Things{ ACID,   };
-    $LMap->[0][8][MINERAL] = $Things{ RUBBLE, };
+    $LMap[0][7][MINERAL] = $Things{ ACID,   };
+    $LMap[0][8][MINERAL] = $Things{ RUBBLE, };
 
-    $LMap->[4][0][MINERAL] = $Things{ RUBBLE, };
-    $LMap->[3][1][MINERAL] = $Things{ RUBBLE, };
-    $LMap->[4][1][MINERAL] = $Things{ RUBBLE, };
-    $LMap->[2][0][MINERAL] = $Things{ ACID,   };
+    $LMap[4][0][MINERAL] = $Things{ RUBBLE, };
+    $LMap[3][1][MINERAL] = $Things{ RUBBLE, };
+    $LMap[4][1][MINERAL] = $Things{ RUBBLE, };
+    $LMap[2][0][MINERAL] = $Things{ ACID,   };
+
     make_monster(
         0, 3,
         species => TROLL,
@@ -631,19 +610,62 @@ sub generate_level {
         display => 'T'
     );
 
+    make_monster(
+        7, 8,
+        species => GHAST,
+        hp      => 4,
+        energy  => 10,
+        display => 'G'
+    );
+
     # how to attach passive functions to (now) specific cell objects
-    #reify($LMap->[0][0], MINERAL, passive_msg_maker('bla blah I'));
-    #reify($LMap->[0][1], MINERAL, passive_msg_maker('bla blah A'));
-    #reify($LMap->[1][0], MINERAL, passive_msg_maker('bla blah B'));
-    #reify($LMap->[0][4], MINERAL, passive_msg_maker('oneshot 1', 1));
-    #reify($LMap->[4][0], MINERAL, passive_msg_maker('oneshot 2', 1));
+    #reify($LMap[0][0], MINERAL, passive_msg_maker('bla blah I'));
+    #reify($LMap[0][1], MINERAL, passive_msg_maker('bla blah A'));
+    #reify($LMap[1][0], MINERAL, passive_msg_maker('bla blah B'));
+    #reify($LMap[0][4], MINERAL, passive_msg_maker('oneshot 1', 1));
+    #reify($LMap[4][0], MINERAL, passive_msg_maker('oneshot 2', 1));
 }
 
 sub has_amulet {
     for my $item ($Animates[HERO][STASH][LOOT]->@*) {
         return 1 if $item->[SPECIES] == AMULET;
     }
+    # also must check shield regen slot; could set a flag but then they
+    # could drop the damn thing or it could burn up repairing the shield
+    # argh so complicated
+    return 1
+      if defined $Animates[HERO][STASH][SHIELDUP]
+      and $Animates[HERO][STASH][SHIELDUP][STASH][GEM_NAME] eq AMULET_NAME;
     return 0;
+}
+
+sub has_lost {
+    restore_term();
+    my $score = score();
+    print CLEAR_SCREEN,
+      "Alas, you did not win this time.\n\n$score\n";
+    exit(1);
+}
+
+sub has_won {
+    restore_term();
+    my $score = score();
+    # some of this is borrowed from rogue 3.6.3
+    print CLEAR_SCREEN, <<"WIN_SCREEN";
+
+  @   @               @   @           @          @@@  @     @
+  @   @               @@ @@           @           @   @     @
+  @   @  @@@  @   @   @ @ @  @@@   @@@@  @@@      @  @@@    @
+   @@@@ @   @ @   @   @   @     @ @   @ @   @     @   @     @
+      @ @   @ @   @   @   @  @@@@ @   @ @@@@@     @   @     @
+  @   @ @   @ @  @@   @   @ @   @ @   @ @         @   @  @
+   @@@   @@@   @@ @   @   @  @@@@  @@@@  @@@     @@@   @@   @
+
+    Congratulations. You have emerged victorious!
+
+$score
+WIN_SCREEN
+    exit(0);
 }
 
 sub help_screen {
@@ -657,8 +679,8 @@ sub help_screen {
      b  j  n               . - wait a turn      d - drop item
                          g , - pick up item     i - show inventory
     x - examine board    < > - activate gate    M - show messages
-    e - clear error      C-l - redraw screen    ? - show help
-    v - show version
+    E - clear error      C-l - redraw screen    ? - show help
+    v - show version     e   - equip a gem
     
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
@@ -674,52 +696,109 @@ HELP_SCREEN
     refresh_board();
 }
 
+# something something Panopticon
+sub hide_screen {
+    print CLEAR_SCREEN, at(1, 2), <<"BOSS_SCREEN", "\n:", SHOW_CURSOR;
+LS(1)                     BSD General Commands Manual                    LS(1)
+
+\e[1mNAME\e[m
+     \e[1mls\e[m -- list directory contents
+
+SYNOPSIS
+     \e[1mls\e[m [-\e[1mABCFGHLOPRSTUW\@abcdefghiklmnopqrstuwx1\e[m] [\e[4mfile\e[m \e[4m...\e[m]
+
+\e[1mDESCRIPTION\e[m
+     For each operand that names a \e[4mfile\e[m of a type other than directory, ls
+     displays its name as well as any requested, associated information.  For
+     each operand that names a \e[4mfile\e[m of type directory, \e[1mls\e[m displays the names
+     of files contained within that directory, as well as any requested, asso-
+     ciated information.
+
+     If no operands are given, the contents of the current directory are dis-
+     played.  If more than one operand is given, non-directory operands are
+     displayed first; directory and non-directory operands are sorted sepa-
+     rately and in lexicographical order.
+
+     The following options are available:
+BOSS_SCREEN
+    await_quit();
+    print HIDE_CURSOR;
+    refresh_board();
+}
+
+# basically an expensive gem (vegetable) with speciation involved
+sub make_amulet {
+    my ($col, $row) = @_;
+    state $made = 0;
+    # DBG will need to make it multiple times if they jump through a
+    # hole and miss where we put it
+    if ($made) {
+        warn "already made an amulet\n";
+        return;
+    }
+    my $amulet;
+    $amulet->@[ GENUS, SPECIES, DISPLAY ] = (VEGGIE, AMULET, ',');
+    $amulet->[STASH][GEM_NAME]  = AMULET_NAME;
+    $GGV += $amulet->[STASH][GEM_VALUE] = 1000;
+    # meh, nuke the lowly gem already there
+    #die "already a veggie $col,$row??\n" if defined $LMap[$row][$col][VEGGIE];
+    $LMap[$row][$col][VEGGIE] = $amulet;
+    $made = 1;
+}
+
 sub make_gem {
     my ($col, $row) = @_;
     my ($name, $value);
     if (int rand 16 == 0) {
         $name  = "Bloodstone";
-        $value = 43 + int(rand 4 + rand 4 + rand 4);
+        $value = 83 + int(rand 6 + rand 6 + rand 6);
     } elsif (int rand 8 == 0) {
         $name  = "Sunstone";
-        $value = 23 + int(rand 4 + rand 4 + rand 4);
+        $value = 43 + int(rand 8 + rand 8 + rand 8);
     } else {
         $name  = "Moonstone";
-        $value = 3 + int(rand 4 + rand 4 + rand 4);
+        $value = 12 + int(rand 10 + rand 10);
     }
     my @adj = qw/Imperial Mystic Rose Smoky Warped/;
     if (int rand 3 == 0) {
         $name = $adj[ rand @adj ] . ' ' . $name;
-        $value += 11 + int rand 10;
+        $value += 31 + int rand 30;
     }
     my $gem;
-    $gem->@[ GENUS, SPECIES, DISPLAY, STASH ] =
-      (VEGGIE, GEM, '*', [ $name, $value ]);
-    $LMap->[$row][$col][VEGGIE] = $gem;
+    $gem->@[ GENUS, SPECIES, DISPLAY ] = (VEGGIE, GEM, '*');
+    $gem->[STASH][GEM_NAME]  = $name;
+    $gem->[STASH][GEM_VALUE] = $value;
+    die "already a veggie $col,$row??\n"
+      if defined $LMap[$row][$col][VEGGIE];
+    $LMap[$row][$col][VEGGIE] = $gem;
+    $GGV += $value;
 }
 
 sub make_monster {
     my ($col, $row, %params) = @_;
     my $monst;
-    $monst->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE, STASH, LMC ] = (
-        ANIMAL, $params{species}, $params{display}, $params{energy},
-        \&update_monster,
-        [ $params{hp}, [], ENERGY ],
-        $LMap->[$row][$col]
+    $monst->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE, LMC ] = (
+        ANIMAL,          $params{species}, $params{display},
+        $params{energy}, \&update_monster, $LMap[$row][$col]
     );
+    $monst->[STASH][HITPOINTS] = $params{hp};
+    $monst->[STASH][ECOST]     = CAN_MOVE;      # previous move cost
     push @Animates, $monst;
-    die "DBG already occupied??" if defined $LMap->[$row][$col][ANIMAL];
-    $LMap->[$row][$col][ANIMAL] = $monst;
+    die "DBG already occupied??" if defined $LMap[$row][$col][ANIMAL];
+    $LMap[$row][$col][ANIMAL] = $monst;
     weaken($monst->[LMC]);
 }
 
+# TODO may need x,y if calling this from generate fn instead of game_l
 sub make_player {
-    $Animates[HERO]->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE, STASH ] = (
-        ANIMAL, HERO, '@', CAN_MOVE, \&update_player,
-        [ START_HP, [], CAN_MOVE ],
-    );
+    $Animates[HERO]->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE ] =
+      (ANIMAL, HERO, '@', CAN_MOVE, \&update_player,);
+    $Animates[HERO][STASH][HITPOINTS] = START_HP;
+    $Animates[HERO][STASH][ECOST]     = CAN_MOVE;    # prev. move cost
+    $Animates[HERO][STASH][LOOT]      = [];
 }
 
+# KLUGE too long. break out and abstractify... but that clock be tickin
 sub manage_inventory {
     my ($command, $message) = @_;
     print SHOW_CURSOR;
@@ -735,12 +814,7 @@ sub manage_inventory {
                 at_row(MSG_ROW + $i)
               . CLEAR_RIGHT
               . $label++ . ') '
-              . $item->[DISPLAY] . ' ';
-            if ($item->[SPECIES] == GEM) {
-                $s .= join "\t", $item->[STASH]->@[ 1, 0 ];
-            } else {
-                $s .= $Descript{ $item->[SPECIES] };
-            }
+              . $item->[DISPLAY] . ' ' . veggie_name($item);
         }
         $offset = $loot->@*;
     } else {
@@ -752,7 +826,7 @@ sub manage_inventory {
         $s .= $message;
     } else {
         $s .= 'press Esc to continue';
-        $s .= ' or (d)rop' if $has_loot;
+        $s .= ' or (d)rop, (e)quip' if $has_loot;
     }
     print $s, ' --';
   CMD: while (1) {
@@ -781,6 +855,22 @@ sub manage_inventory {
                     }
                 }
             }
+        } elsif ($key eq 'e') {
+            if (!defined $message) {
+                print at_row(MSG_ROW + $offset), CLEAR_RIGHT,
+                  "-- equip item L)able or Esc to exit --";
+            }
+            while (1) {
+                my $use = ReadKey(0);
+                last CMD if $use eq "\033" or $use eq 'q';
+                if ($use =~ m/^[A-X]$/) {    # NOTE related to LOOT_MAX
+                    my $i = ord($use) - 65;
+                    if ($i < $loot->@*) {
+                        use_item($loot, $i, $Animates[HERO][STASH]);
+                        last CMD;
+                    }
+                }
+            }
         }
     }
     print HIDE_CURSOR;
@@ -802,7 +892,7 @@ sub move_animate {
     # otherwise veggies in rubble never allow the rubble passive
     # effect to fire
     for my $i (ANIMAL, MINERAL) {
-        my $target = $LMap->[$drow][$dcol][$i];
+        my $target = $LMap[$drow][$dcol][$i];
         if (defined $target) {
             @_ = ($ani, [ $dcol, $drow ], $target, $cost);
             goto $Bump_Into{ $target->[GENUS] }->&*;
@@ -830,11 +920,11 @@ sub move_examine {
     while (1) {
         my $s = '';
         for my $i (ANIMAL, VEGGIE) {
-            my $x = $LMap->[$row][$col][$i];
+            my $x = $LMap[$row][$col][$i];
             $s .= $x->[DISPLAY] . ' ' . $Descript{ $x->[SPECIES] } . ' '
               if defined $x;
         }
-        my $g = $LMap->[$row][$col][MINERAL];
+        my $g = $LMap[$row][$col][MINERAL];
         $s .= $g->[DISPLAY] . ' ' . $Descript{ $g->[SPECIES] }
           if defined $g;
         print at_row(STATUS_ROW), CLEAR_RIGHT, $s,
@@ -859,7 +949,7 @@ sub move_examine {
 sub move_nop {
     apply_passives($Animates[HERO], DEFAULT_COST, 0);
     # NOTE constant amount of time even if they idle in rubble
-    return MOVE_OK, DEFAULT_COST;
+    return MOVE_OKAY, DEFAULT_COST;
 }
 
 sub move_pickup {
@@ -867,15 +957,14 @@ sub move_pickup {
     return MOVE_FAILED, 0, 'PKC-0101' unless defined $lmc->[VEGGIE];
     my $loot = $Animates[HERO][STASH][LOOT];
     return MOVE_FAILED, 0, 'PKC-0102' if $loot->@* >= LOOT_MAX;
-    # TODO need a "name-of" call also called by manage_inventory
-    log_message('Picked something up.');
+    log_message('Picked up ' . veggie_name($lmc->[VEGGIE]));
     push $loot->@*, $lmc->[VEGGIE];
     $lmc->[VEGGIE] = undef;
     print display_cellobjs();
     my $cost = DEFAULT_COST;
     $cost += rubble_delay($Animates[HERO], $cost)
       if $lmc->[MINERAL][SPECIES] == RUBBLE;
-    return MOVE_OK, $cost;
+    return MOVE_OKAY, $cost;
 }
 
 sub move_player_maker {
@@ -886,6 +975,13 @@ sub move_player_maker {
         print display_cellobjs();
         return @ret;
     }
+}
+
+sub move_use {
+    return MOVE_FAILED, 0, 'PKC-0112'
+      unless $Animates[HERO][STASH][LOOT]->@*;
+    @_ = ('e', 'equip item L)abel or Esc to exit');
+    goto &manage_inventory;
 }
 
 sub nope_regarding {
@@ -904,14 +1000,14 @@ sub redraw_movers {
   CELL: for my $point (@RedrawA) {
         next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
         for my $i (ANIMAL, VEGGIE) {
-            my $ani = $LMap->[ $point->[PROW] ][ $point->[PCOL] ][$i];
+            my $ani = $LMap[ $point->[PROW] ][ $point->[PCOL] ][$i];
             if (defined $ani and $ani->@*) {
                 print at(map { MAP_DISP_OFF + $_ } $point->@*), $ani->[DISPLAY];
                 next CELL;
             }
         }
         print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
+          $LMap[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
     }
     # DBG prolly may happen if X kills Y then Z steps into square, but
     # that's unlikely given simultaneous moves and post-move cleanup of
@@ -930,14 +1026,14 @@ sub redraw_movers {
   CELL: for my $point (@RedrawB) {
         next if $seen{ $point->[PROW] . ',' . $point->[PCOL] }++;
         for my $i (ANIMAL, VEGGIE) {
-            my $ani = $LMap->[ $point->[PROW] ][ $point->[PCOL] ][$i];
+            my $ani = $LMap[ $point->[PROW] ][ $point->[PCOL] ][$i];
             if (defined $ani and $ani->@*) {
                 print at(map { MAP_DISP_OFF + $_ } $point->@*), $ani->[DISPLAY];
                 next CELL;
             }
         }
         print at(map { MAP_DISP_OFF + $_ } $point->@*),
-          $LMap->[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
+          $LMap[ $point->[PROW] ][ $point->[PCOL] ][MINERAL][DISPLAY];
     }
     for my $key (keys %seen) {
         if ($seen{$key} > 1) {
@@ -962,9 +1058,9 @@ sub relocate {
     my $src = $ani->[LMC][WHERE];
     push @RedrawA, $src;
     push @RedrawB, $dest;
-    my $dest_lmc = $LMap->[ $dest->[PROW] ][ $dest->[PCOL] ];
+    my $dest_lmc = $LMap[ $dest->[PROW] ][ $dest->[PCOL] ];
     $dest_lmc->[ANIMAL] = $ani;
-    undef $LMap->[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
+    undef $LMap[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
     $ani->[LMC] = $dest_lmc;
     weaken($ani->[LMC]);
 }
@@ -990,6 +1086,11 @@ sub rubble_delay {
     return $mod;    # to be added to the overall cost
 }
 
+sub score {
+    my $score = loot_value();
+    return "Score: $score in $Turn_Count turns and $Energy_Spent energy use";
+}
+
 # COSMETIC inline display_ calls here for speeds?
 sub show_status_bar {
     #warn "ECOST IN HERO IS $Animates[HERO][STASH][ECOST]\n";
@@ -1003,7 +1104,7 @@ sub passive_burn {
     #warn "DBG ACID duration $duration\n";
     log_code('PKC-007E') if $ani->[SPECIES] == HERO;
     # TUNING about 20 turns to die from sitting in acid? is that too high?
-    apply_damage($ani, 'acidburn', $duration);
+    apply_damage($ani, 'acidburn', $duration) unless $newcell;
 }
 
 sub passive_msg_maker {
@@ -1025,29 +1126,41 @@ sub reify {
     $lmc->[$i][UPDATE] = $update if defined $update;
 }
 
+sub loot_value {
+    my $value = 0;
+    for my $item ($Animates[HERO][STASH][LOOT]->@*) {
+        if ($item->[SPECIES] == AMULET) {
+            $value += 1000;
+        } elsif ($item->[SPECIES] == GEM) {
+            $value += $item->[STASH][GEM_VALUE];
+        } else {
+            warn "DBG item with no score value $item->[SPECIES] ??\n";
+        }
+    }
+    # they probably won't need to charge their shield after the game
+    # is over?
+    $value += $Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE]
+      if defined $Animates[HERO][STASH][SHIELDUP];
+    return $value;
+}
+
 sub update_gameover {
     state $count = 0;
     tcflush(STDIN_FILENO, TCIFLUSH);
     my $key = ReadKey(0);
     if ($count > TIME_TO_DIE) {
-        log_message('-- press Esc to continue --');
-        game_over('Congratulations! You have died.')
-          if $key eq "\033" or $key eq 'q';
+        print AT_MSG_ROW, CLEAR_RIGHT, '-- press Esc to continue --';
+        has_lost() if $key eq "\033" or $key eq 'q';
     } else {
         log_message('Communication lost with remote unit.');
     }
     $count++;
-    return MOVE_OK, DEFAULT_COST;
+    return MOVE_OKAY, DEFAULT_COST;
 }
 
 sub update_monster {
     warn "monster twiddles thumbs waiting to be implemented\n";
-    # TODO apply passives (except not messages to the player...) may
-    # need to apply to monsters, unless map gen never puts them in a)
-    # rubble or b) acid or c) on a hole or d) on a WALL (well wall might
-    # be okay, they'll just be replaced with it when killed, like a
-    # turret in Brogue)
-    return MOVE_OK, DEFAULT_COST * 4;
+    return MOVE_OKAY, DEFAULT_COST * 4;
 }
 
 sub update_player {
@@ -1070,8 +1183,60 @@ sub update_player {
         # of board?)
         last if $ret != MOVE_FAILED;
     }
+    if (defined $Animates[HERO][STASH][SHIELDUP]
+        and $Animates[HERO][STASH][HITPOINTS] < START_HP) {
+        my $need = START_HP - $Animates[HERO][STASH][HITPOINTS];
+        my $offer = between(
+            0,
+            int($cost / 3),    # max heal rate over "time"
+            $Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE]
+        );
+        my $heal = between(0, $need, $offer);
+        #warn "HEALUP $need $offer $heal\n";
+        $Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
+        $Animates[HERO][STASH][HITPOINTS]                  += $heal;
+        $GGV                                               -= $heal;
+        # <= 0 and meh if hit release time
+        if ($Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] < 0) {
+            die "DBG math is hard??";
+        }
+        if ($Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] == 0) {
+            log_code('PKC-0113');
+            undef $Animates[HERO][STASH][SHIELDUP];
+        }
+    }
+    $Energy_Spent += $cost;
     $Turn_Count++;
     return $ret, $cost;
+}
+
+sub use_item {
+    my ($loot, $i, $stash) = @_;
+    if (!($loot->[$i][SPECIES] == GEM or $loot->[$i][SPECIES] == AMULET)) {
+        log_code('PKC-0111');
+        return;
+    }
+    if (defined $stash->[SHIELDUP]) {
+        warn "DBG DOIN SWAP\n";
+        ($stash->[SHIELDUP], $loot->[$i]) = ($loot->[$i], $stash->[SHIELDUP]);
+    } else {
+        warn "DBG INSERT ($i)\n";
+        warn Dumper $loot->[$i], $stash->[SHIELDUP];
+        $stash->[SHIELDUP] = splice $loot->@*, $i, 1;
+        warn Dumper $loot->[$i], $stash->[SHIELDUP];
+        warn "DONE INSERT ($i)\n";
+    }
+}
+
+sub veggie_name {
+    my ($veg) = @_;
+    my $s;
+    if ($veg->[SPECIES] == GEM or $veg->[SPECIES] == AMULET) {
+        $s = sprintf "(%d) %s", $veg->[STASH]->@[ GEM_VALUE, GEM_NAME ];
+    } else {
+        $s = $Descript{ $veg->[SPECIES] } // die "DBG uh what name??";
+    }
+    return $s;
 }
 
 1;

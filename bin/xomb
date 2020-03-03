@@ -128,11 +128,26 @@ some amount of damage. Ascent is only possible with the Dragonstone.
 
 =item C<*>
 
-A gemstone. Collect these.
+A gemstone. Collect these. They may be equipped from the inventory to
+provide shield repair over time (at a certain cost to the gem (and to
+your score)). The gem value is shown before the name:
+
+    B) * (88) Bloodstone
+    C) * (19) Moonstone
+    D) * (58) Warped Moonstone
+    -- press Esc to continue or (d)rop, (e)quip --
 
 =item C<#>
 
 Wall. Generally impassable.
+
+=item C<^>
+
+Rubble. Generally passable, though may slow you down.
+
+=item C<~>
+
+Acid pond. Probably an OSHA violation.
 
 =item C<.>
 
@@ -140,12 +155,15 @@ An empty cell.
 
 =item C< >
 
-Holes are represented by a black space and will drop you to the
-next level.
+Holes are represented by an empty space and will drop you to the next
+level, quicker than a gate can do it. Yes, there is a drawback. The edge
+of the level map is also represented (sometimes) with empty spaces, but
+these are not holes.
 
 =back
 
-The Xarci Bedo are represented by uppercase ASCII letters.
+The Xarci Bedo are represented by uppercase ASCII letters, and exhibit
+the usual fantasy tropes: Gatling Autocannon, Railgun, etc.
 
 =head1 DIAGNOSTICS
 
@@ -179,7 +197,7 @@ Environmental hazard proximity alarm.
 
 =head2 PKC-0099
 
-Gyroscopic control system reports unexpected acceleration.
+Gyroscopic alignment control array reports unexpected acceleration.
 
 =head2 PKC-0101
 
@@ -193,9 +211,17 @@ Inventory stack allocation failure.
 
 Item disposal process error. Clear item exit disposal slot before retry.
 
+=head2 PKC-0111
+
+Incompatible item use handler exception error.
+
 =head2 PKC-0112
 
 Underflow on inventory stack query request.
+
+=head2 PKC-0113
+
+Underflow on shield repair module feed unit.
 
 =head2 PKC-0302
 
@@ -229,8 +255,7 @@ Jeremy Mates
 
 =head1 BUGS
 
-B<xomb> assumes that the terminal used has a black background. B<xomb>
-assumes that the terminal supports various ANSI or XTerm Control
+B<xomb> assumes that the terminal supports various ANSI or XTerm Control
 Sequences.
 
 =cut
