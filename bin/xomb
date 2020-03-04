@@ -99,6 +99,9 @@ particular may cause the suboptimal degredation of array view scans.
 
 =head2 Commands
 
+With numlock enabled a numeric keypad may be able to be used to
+navigate.
+
      y  k  u     Motion is traditional to rogue(6) as shown in the
       \ | /      compass to the left. Other commands, of which some
     h - @ - l    take time to complete, include:
@@ -112,9 +115,6 @@ particular may cause the suboptimal degredation of array view scans.
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
     will reject the action.
-
-With numlock enabled a numeric keypad may be able to be used to
-navigate.
 
 =head2 Symbols
 

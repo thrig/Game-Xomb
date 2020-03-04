@@ -5,13 +5,14 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.10';
+our $VERSION = '0.11';
 
 use 5.24.0;
 use warnings;
 #use Carp::Always;           # DBG
-use Carp qw(croak confess);    # DBG
-use Data::Dumper;              # DBG
+use Carp qw(croak confess);            # DBG
+use Data::Dumper;                      # DBG
+use Data::Dumper::Concise::Aligned;    # DBG
 use List::Util qw(min);
 use List::UtilsBy qw(nsort_by);
 use POSIX qw(STDIN_FILENO TCIFLUSH tcflush);
@@ -101,10 +102,13 @@ sub BLACK_SPOT () { 6 }    # marked for death
 sub ENERGY ()     { 7 }    # how long until their next update call
 
 # Animates stash slots
-sub HITPOINTS () { 0 }
-sub ECOST ()     { 1 }     # cost of last move made
-sub LOOT ()      { 2 }     # inventory
-sub SHIELDUP ()  { 3 }     # a gem can recharge the shield
+sub HITPOINTS () { 0 }     # player, monsters
+sub ECOST ()     { 1 }     # player, monsters - cost of last move
+sub LOOT ()      { 2 }     # player inventory
+sub SHIELDUP ()  { 3 }     # player shield recharge gem
+# Monster stash slots
+sub RANGE ()  { 2 }        # max shooting range
+sub CUTOFF () { 3 }        # how likely to take longshots
 # GEM stash slots
 sub GEM_NAME ()  { 0 }
 sub GEM_VALUE () { 1 }
@@ -148,7 +152,7 @@ our %Damage_From = (
         return $burn;
     },
     attackby => sub {
-        my ($ani) = @_;    # the attacker
+        my ($ani) = @_;    # the attacker TODO instead lookup in stash
         return roll(3, 6);
     },
     falling => sub {
@@ -206,8 +210,8 @@ our %Bump_Into = (
         } else {
             log_code('PKC-0302') if $mover->[SPECIES] == HERO;
         }
-        # try not to fight while in an acid pond? of course any dungeon
-        # master worth their salt would immediately build railgun towers
+        # try not to fight while in acid? of course any dungeon master
+        # worth their salt would immediately build railgun towers
         # surrounded by acid ponds...
         $cost += rubble_delay($mover, $cost)
           if $mover->[LMC][MINERAL][SPECIES] == RUBBLE;
@@ -328,8 +332,8 @@ our %Key_Commands = (
 
 sub animate_plunge {
     my ($mover, $dpoint) = @_;
-    my $lmc = $mover->[LMC];
-    my $cell   = $lmc->[VEGGIE] // $lmc->[MINERAL];
+    my $lmc  = $mover->[LMC];
+    my $cell = $lmc->[VEGGIE] // $lmc->[MINERAL];
     print at(map { MAP_DOFF + $_ } $lmc->[WHERE]->@*)
       . $cell->[DISPLAY]
       . at(map { MAP_DOFF + $_ } $dpoint->@*)
@@ -463,7 +467,8 @@ sub display_cellobjs {
 sub display_hitpoints {
     my $hp = $Animates[HERO][STASH][HITPOINTS];
     $hp = 0 if $hp < 0;
-    log_message('Shield module failure.') if $hp == 0;
+    # TODO hmm do this instead over in apply_damage? don't want it running if player update fn already has changed
+    #log_message('Shield module failure.') if $hp == 0;
     my $ticks = int $hp / 2;
     my $hpbar = '=' x $ticks;
     $hpbar .= '-' if $ticks & 1;
@@ -500,7 +505,6 @@ sub game_loop {
 
     print ALT_SCREEN, HIDE_CURSOR, HIDE_POINTER, CLEAR_SCREEN, TERM_NORM;
     log_message('Welcome to xomb');
-    raycast_fov(1);
     show_top_message();
     show_status_bar();
 
@@ -511,7 +515,13 @@ sub game_loop {
         my @movers;
         for my $ani (@Animates) {
             $ani->[ENERGY] -= $min_cost;
-            push @movers, $ani if $ani->[ENERGY] <= CAN_MOVE;
+            if ($ani->[ENERGY] <= CAN_MOVE) {
+                push @movers, $ani;
+                # does the FOV need an update before they move?
+                # oh this might be lots better as then anything that invalidates
+                # the FOV can just undef it and then this here will run
+                raycast_fov() if $ani->[SPECIES] == HERO;
+            }
         }
         # simultaneous move shuffle; this may be important in edge cases
         # such as when a player is trying to jump down a hole before
@@ -612,7 +622,7 @@ sub generate_level {
     for my $x (10 .. 16) {
         for my $y (10 .. 16) {
             $LMap[$y][$x][MINERAL] = $Things{ RUBBLE, };
-            $LMap[ $y ][ $x + 10 ][MINERAL] = $Things{ ACID, };
+            $LMap[$y][ $x + 10 ][MINERAL] = $Things{ ACID, };
         }
     }
 
@@ -797,6 +807,9 @@ sub make_monster {
     );
     $monst->[STASH][HITPOINTS] = $params{hp};
     $monst->[STASH][ECOST]     = CAN_MOVE;      # previous move cost
+    $monst->[STASH][RANGE]     = 14;
+    $monst->[STASH][CUTOFF]    = 0.5;
+    # TODO need more weaponry slots and fire time cost that varies by onst
     push @Animates, $monst;
     die "DBG already occupied??" if defined $LMap[$row][$col][ANIMAL];
     $LMap[$row][$col][ANIMAL] = $monst;
@@ -1064,7 +1077,9 @@ sub raycast_fov {
                 my $loc = $col . ',' . $row;
                 return -1 if $blocked{$loc};
 
-                # FOV may also be blocked by walls, etc.
+                # FOV may also be blocked by walls, etc. monsters also
+                # have similar problems getting a lock on the player, to
+                # keep that somewhat reciprocal
                 my $cell = $LMap[$row][$col][MINERAL];
                 if ($cell->[SPECIES] == WALL) {
                     $blocked{$loc} = 1;
@@ -1075,7 +1090,7 @@ sub raycast_fov {
                 }
 
                 return 0 if $Visible_Cell{$loc};
-                $Visible_Cell{$loc} = [$col,$row];
+                $Visible_Cell{$loc} = [ $col, $row ];
                 for my $i (ANIMAL, VEGGIE) {
                     if (defined $LMap[$row][$col][$i]) {
                         push $byrow{$row}->@*, [ $col, $LMap[$row][$col][$i][DISPLAY] ];
@@ -1109,7 +1124,7 @@ sub raycast_fov {
       . at(map { MAP_DOFF + $_ } $cx, $cy)
       . $LMap[$cy][$cx][ANIMAL][DISPLAY];
     print $FOV;
-    $Visible_Cell{ $cx . ',' . $cy} = [$cx,$cy];
+    $Visible_Cell{ $cx . ',' . $cy } = [ $cx, $cy ];
 }
 
 sub refresh_board {
@@ -1192,6 +1207,18 @@ sub passive_msg_maker {
     }
 }
 
+sub reduce {
+    my ($lmc) = @_;
+    $lmc->[MINERAL] = [ $lmc->[MINERAL]->@* ];
+    if ($lmc->[MINERAL][SPECIES] == WALL) {
+        $lmc->[MINERAL]->@[ SPECIES, DISPLAY ] =
+          $Things{ RUBBLE, }->@[ SPECIES, DISPLAY ];
+    } elsif ($lmc->[MINERAL][SPECIES] == RUBBLE) {
+        $lmc->[MINERAL]->@[ SPECIES, DISPLAY ] =
+          $Things{ FLOOR, }->@[ SPECIES, DISPLAY ];
+    }
+}
+
 # similar to tu'a in Lojban
 sub reify {
     my ($lmc, $i, $update) = @_;
@@ -1217,6 +1244,8 @@ sub loot_value {
     return $value;
 }
 
+# dead player gets different update routine (similar to how POWDER still
+# runs the dungeon after death?)
 sub update_gameover {
     state $count = 0;
     tcflush(STDIN_FILENO, TCIFLUSH);
@@ -1224,7 +1253,7 @@ sub update_gameover {
     if ($count > TIME_TO_DIE) {
         print AT_MSG_ROW, CLEAR_RIGHT, '-- press Esc to continue --';
         has_lost() if $key eq "\033" or $key eq 'q';
-    } else {
+    } elsif ($count == 0) {
         log_message('Communication lost with remote unit.');
     }
     $count++;
@@ -1232,14 +1261,106 @@ sub update_gameover {
 }
 
 sub update_monster {
-    warn "monster twiddles thumbs waiting to be implemented\n";
+    my ($self) = @_;
+
+    # nothing too complicated, try to get a lock on the player and
+    # shoot at them
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+
+    # is this happening? quick check on distance
+    my $dist = abs($tcol - $mcol) + abs($trow - $mrow);
+    return MOVE_OKAY, DEFAULT_COST if $dist > $self->[STASH][RANGE];
+
+    # how attractive is the shot? moreso when player is low on health or
+    # when they are nearby; lower values better
+    my $hpf   = $Animates[HERO][STASH][HITPOINTS] / START_HP;
+    my $distf = $dist / 14;
+    my $favor = $hpf * $distf;
+    return MOVE_OKAY, DEFAULT_COST if $favor > $self->[STASH][CUTOFF];
+
+    # do they actually hit? "20" here could vary for monsters that
+    # are better or worse shots
+    if (int rand 100 > 20 + int((1 - $distf) * 100)) {
+        warn "MISSED $self->[DISPLAY] df $distf\n";
+        return MOVE_OKAY, DEFAULT_COST;
+    }
+
+    my $lock = 1;
+    my @path;
+    linecb(
+        sub {
+            my ($col, $row, $iters) = @_;
+            if ($iters > 7) {    # MAX RANGE (might vary by monsttype)
+                $lock = 0;
+                return -1;
+            }
+            my $cell = $LMap[$row][$col][MINERAL];
+            if ($cell->[SPECIES] == WALL) {
+                # probably low odds of this happen, but will abort shot
+                # TODO if cell is visible blowed up must be animated
+                warn "they gone done shot wall!\n";
+                reduce($LMap[$row][$col]);
+                # hmm no not enough, and calling raycast would get a different
+                # RADAR view. maybe "update_fov" call that uses @path and adds those
+                # to the visible ... that's still going to look a bit funny as it
+                # may not open enough of the FOV if normally an arc would be visible?
+                #
+                # or player fov could be a different animate that runs more frequently
+                # than the player does (so if they're hiding behind column not moving
+                # FOV update animate would run; or if not moving could have a "is
+                # FOV undef?" and if so refresh it (*before* the player moves!)
+                undef $FOV;
+                $lock = 0;
+                return -1;
+            } elsif ($cell->[SPECIES] == RUBBLE) {
+                warn "point reduced to rbble";    # DBG
+                reduce($LMap[$row][$col]);
+                undef $FOV;
+                # similar FOV problem as for player, see raycast
+                if (0 == int rand 2) {
+                    $lock = 0;
+                    return -1;
+                }
+            }
+            push @path, [ $col, $row ];
+            return 0;
+        },
+        $mcol,
+        $mrow,
+        $tcol,
+        $trow
+    );
+
+    warn "LOCK $self->[DISPLAY] ($lock) " . DumperA P => \@path;
+    return MOVE_OKAY, DEFAULT_COST unless $lock;
+
+    for my $ref (@path) {
+        # TODO okay here they hit player and we have a path; animate
+        # (assuming the cells are visible in FOV to player?) that
+        # in rogue 3.6 fashion for staff bolts
+    }
+
+    # (TODO will depend on monst type...)
+    apply_damage($Animates[HERO], 'attackby', $self);
+
+    # also this here recharge must depend on monst type, big things
+    # hit less often so player can oops out of there, while gatlings
+    # chip away
+    #
+    # oh could have mortar type that lobs shells (so skip the path foo,
+    # only distance concerns) that do AoE and can break down walls/rubble
+    # (maybe the long stuff can't shoot at close range, cannon C can
+    # but not H howitz
     return MOVE_OKAY, DEFAULT_COST * 4;
 }
 
 sub update_player {
+    my ($self) = @_;
     my ($cost, $ret);
     tcflush(STDIN_FILENO, TCIFLUSH);
     while (1) {
+        # TODO inner count here so msg logging can know if "moves" have happened depsite same TurnCount
         my $key;
         while (1) {
             $key = ReadKey(0);
@@ -1247,7 +1368,7 @@ sub update_player {
             log_message(sprintf "DBG unknown key \\%03o", ord $key);
         }
         #warn "DBG key $key " . sprintf "%03o\n", ord $key;
-        ($ret, $cost, my $code) = $Key_Commands{$key}->();
+        ($ret, $cost, my $code) = $Key_Commands{$key}->($self);
         confess "DBG no cost set?? $key" unless defined $cost;
         log_code($code) if defined $code;
         # COSMETIC maybe clear Energy cost display here if MOVE_FAILED
@@ -1256,26 +1377,26 @@ sub update_player {
         # of board?)
         last if $ret != MOVE_FAILED;
     }
-    if (defined $Animates[HERO][STASH][SHIELDUP]
-        and $Animates[HERO][STASH][HITPOINTS] < START_HP) {
-        my $need  = START_HP - $Animates[HERO][STASH][HITPOINTS];
+    if (defined $self->[STASH][SHIELDUP]
+        and $self->[STASH][HITPOINTS] < START_HP) {
+        my $need  = START_HP - $self->[STASH][HITPOINTS];
         my $offer = between(
             0,
             int($cost / 3),    # max heal rate over "time"
-            $Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE]
+            $self->[STASH][SHIELDUP][STASH][GEM_VALUE]
         );
         my $heal = between(0, $need, $offer);
         #warn "HEALUP $need $offer $heal\n";
-        $Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
-        $Animates[HERO][STASH][HITPOINTS]                  += $heal;
-        $GGV                                               -= $heal;
+        $self->[STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
+        $self->[STASH][HITPOINTS]                  += $heal;
+        $GGV                                       -= $heal;
         # <= 0 and meh if hit release time
-        if ($Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] < 0) {
+        if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] < 0) {
             die "DBG math is hard??";
         }
-        if ($Animates[HERO][STASH][SHIELDUP][STASH][GEM_VALUE] == 0) {
+        if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] == 0) {
             log_code('PKC-0113');
-            undef $Animates[HERO][STASH][SHIELDUP];
+            undef $self->[STASH][SHIELDUP];
         }
     }
     $Energy_Spent += $cost;
