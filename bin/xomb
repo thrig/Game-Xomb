@@ -62,8 +62,8 @@ B<xomb> I<--err=file> I<--seed=i> I<--version>
 =head1 DESCRIPTION
 
 B<xomb> is a computer fantasy game. The object of the game is to survive
-the attacks of the fiendish Xarci Bedo and obtain and escape with the
-fabled Dragonstone. Which, despite the name, is actually a vegetable.
+the attacks of the Xarci Bedo and obtain a lot of gems. To win the game
+you must locate the Dragonstone and get it out.
 
 =head2 Options
 
@@ -86,16 +86,20 @@ Shows the B<xomb> version and quits the game.
 =head2 An Overview of Minos III 
 
 The most recent message is shown at the top of the screen. More of these
-can be viewed using the C<M> command. A status bar at the bottom shows
-the level, the energy cost of the last engery-consuming move, the shield
-points, the item and ground tile (if any) of the current cell, and an
-error code display slot. Consult the L</"DIAGNOSTICS"> section for
-details on these.
+can be viewed using the C<M> command. The status bar at the bottom
+
+    Level 01 E10 SP[=========================-         ][ .][*] 121B
+
+shows the level (C<1>), the cost of the last energy-consuming move
+(C<10>), shield points remaining, the item and ground tile of the
+current cell (here: no item and an empty cell), whether a gem is loaded
+for shield repair (yes), and finally the error code display (C<121B>).
+Consult the L</"DIAGNOSTICS"> section for details on the error codes.
 
 The middle of the screen shows the level map. Various L</"Symbols"> are
 present in this space. Note that the Field Operation View (FOV) readouts
 may be impacted by the harsh conditions on Minos III. Rubble in
-particular may cause the suboptimal degredation of array view scans.
+particular may cause the suboptimal degredation in the FOV.
 
 =head2 Commands
 
@@ -108,8 +112,8 @@ navigate.
       / | \             
      b  j  n                . - wait a turn      x - examine board
                           g , - pick up item     i - show inventory
-    M - show messages     < > - activate gate    e - equip a gem
-    E - clear PKC code    C-l - redraw screen    R - remove a gem
+    M - show messages     < > - activate gate    E - equip a gem
+    p - clear PKC code    C-l - redraw screen    R - remove a gem
     ? - show help         v   - show version     d - drop a gem
 
     Esc or q will exit from sub-displays such as this one. Prompts
@@ -177,7 +181,8 @@ the usual fantasy tropes: Gatling Autocannon, Railgun, etc.
 Various messages may be shown by the Patrol Kombat Computer (PKC) in
 response to command inputs. Details on important codes are listed below.
 Consult the VP XII Operations Manual (Green) for complete scenario
-process control instructions.
+process control instructions. Due to memory limitations only the last
+error code is stored. The readout can be cleared with the C<p> command.
 
 =head2 PKC-0001
 
@@ -241,6 +246,10 @@ Spurious interrupt on data bus array.
 =head2 PKC-1202
 
 Executive overflow on guidance module.
+
+=head2 PKC-121B
+
+Unit already in command mode.
 
 =head2 PKC-1220
 

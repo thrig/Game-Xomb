@@ -1,6 +1,8 @@
 #!perl
 #
 # how much damage do the damage functions dish out?
+#  cpanm App::Prove
+#  XOMB_STATS=1 prove t/damage-stats.t
 
 use 5.24.0;
 use warnings;
@@ -15,13 +17,15 @@ my $testcount = $count * 3;
 
 plan tests => $testcount;
 
+my $hero = Game::Xomb::make_player();
+
 SKIP: {
     skip "no stats without XOMB_STATS set", $testcount
       unless $ENV{XOMB_STATS};
 
     my %args = (
         acidburn => [qw/10/],    # $duration
-        attackby => [qw//],      # $ani as yet unused
+        attackby => [$hero],
         falling  => [qw//],      # smaller body does not matter to Gravity
     );
 
@@ -32,6 +36,8 @@ SKIP: {
         # was there somewhat viable output from the fn?
         ok looks_like_number($ret);
         is $ret, int $ret;
+
+        $name = $Game::Xomb::Things{ $name }->[Game::Xomb::DISPLAY] if exists $Game::Xomb::Things{ $name };
 
         my @ret = map { $fn->($args{$name}->@*) } 1 .. $trials;
         my ($mean, $min, $max) = mean(\@ret);
