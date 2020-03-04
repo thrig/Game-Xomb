@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.09';
+our $VERSION = '0.10';
 
 use 5.24.0;
 use warnings;
@@ -178,15 +178,15 @@ our %Things = (
     WALL,   [ MINERAL, WALL,   '#' ],
 );
 
-# NOTE these must be fairly short as they must all fit in status line
-# and there can be three of them; see move_examine
+# NOTE these need to be fairly short as they must all fit in status line
+# and there could be three of them; see move_examine
 our %Descript = (
     ACID,   'shallow acid pool',
     AMULET, AMULET_NAME,
     FLOOR,  'floor',
     GATE,   'Gate to next level',
-    GEM,    'Gemstone',
-    GHAST,  'Gatling autocannon array',
+    GEM,    'gemstone',
+    GHAST,  'Gatling Autocannon',
     HERO,   'You',
     HOLE,   'Hole',
     RUBBLE, 'some rubble',
@@ -334,10 +334,9 @@ sub animate_plunge {
       . $cell->[DISPLAY]
       . at(map { MAP_DOFF + $_ } $dpoint->@*)
       . $mover->[DISPLAY];
-    # FOV is going to be wiped out, anyways
+    # FOV is going to be wiped out for level change, anyways
     delete $Visible_Cell{ join ',', $dpoint->@* };
     for my $point (values %Visible_Cell) {
-        sleep(0.005);
         print at(map { MAP_DOFF + $_ } $point->@*), ' ';
     }
     sleep(0.05 + rand() / 3);

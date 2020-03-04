@@ -87,41 +87,59 @@ Shows the B<xomb> version and quits the game.
 
 The most recent message is shown at the top of the screen. More of these
 can be viewed using the C<M> command. A status bar at the bottom shows
-the level, the energy cost of the last engery-consuming move, your
-shield points (that ideally should be kept above zero), the item and
-ground tile (if any) of the cell you are in, and an error code display
-slot. L</"DIAGNOSTICS"> has details on the error codes. The middle of
-the screen shows the level map. Various L</"Symbols"> occupy this space.
+the level, the energy cost of the last engery-consuming move, the shield
+points, the item and ground tile (if any) of the current cell, and an
+error code display slot. Consult the L</"DIAGNOSTICS"> section for
+details on these.
+
+The middle of the screen shows the level map. Various L</"Symbols"> are
+present in this space. Note that the Field Operation View (FOV) readouts
+may be impacted by the harsh conditions on Minos III. Rubble in
+particular may cause the suboptimal degredation of array view scans.
 
 =head2 Commands
 
-The C<?> key in-game will show a list of commands available. With
-numlock enabled a numeric keypad may be able to be used to navigate in
-additional to the traditional L<rogue(6)> keys.
+     y  k  u     Motion is traditional to rogue(6) as shown in the
+      \ | /      compass to the left. Other commands, of which some
+    h - @ - l    take time to complete, include:
+      / | \             
+     b  j  n                . - wait a turn      x - examine board
+                          g , - pick up item     i - show inventory
+    M - show messages     < > - activate gate    e - equip a gem
+    E - clear PKC code    C-l - redraw screen    R - remove a gem
+    ? - show help         v   - show version     d - drop a gem
+
+    Esc or q will exit from sub-displays such as this one. Prompts
+    must be answered with Y to carry out the action; N or n or Esc
+    will reject the action.
+
+With numlock enabled a numeric keypad may be able to be used to
+navigate.
 
 =head2 Symbols
 
-These may be inspected in-game using the examine command. At most
-only one item and one Xarci Bedo and one ground tile can occupy the
-same cell.
+These may be inspected in-game using the examine command, assuming they
+were picked up by the FOV scan. At most only one Xarci Bedo, item, and
+ground tile can occupy the same cell. Scientists believe this is due to
+particularities of the geology on Minos III.
 
 =over 4
 
 =item C<@>
 
-Your location on the level map.
+Vessel location.
 
 =item C<%>
 
-A gate (stair) to the next level. A gate takes some amount of time to
-activate. You can also fall through holes; this is quicker but causes
-some amount of damage. Ascent is only possible with the Dragonstone.
+A gate to the next level via the C<< > >> command. A gate takes some
+time to complete the level transition. Ascent is only possible with the
+Dragonstone using C<< < >> on the gate.
 
 =item C<*>
 
-A gemstone. Collect these. They may be equipped from the inventory to
-provide shield repair over time (at a certain cost to the gem (and to
-your score)). The gem value is shown before the name:
+A gemstone. These may be equipped from the inventory to provide shield
+repair over time, though this will damage the gem due to harmonic
+stresses. The gem value is shown before the name:
 
     B) * (88) Bloodstone
     C) * (19) Moonstone
@@ -130,15 +148,15 @@ your score)). The gem value is shown before the name:
 
 =item C<#>
 
-Wall. Generally impassable.
+Wall. Impassable. Generally blocks FOV.
 
 =item C<^>
 
-Rubble. Generally passable, though may slow you down.
+Rubble. Somewhat passable. Often blocks FOV.
 
 =item C<~>
 
-Acid pond. Probably an OSHA violation.
+Acid pond.
 
 =item C<.>
 
@@ -146,7 +164,8 @@ An empty cell.
 
 =item C<o>
 
-Holes will drop you to the next level, quicker than taking a gate.
+A hole that will drop the vessel to the next level. Pilots should be
+aware that safe descent is not certified under all conditions.
 
 =back
 
@@ -157,8 +176,8 @@ the usual fantasy tropes: Gatling Autocannon, Railgun, etc.
 
 Various messages may be shown by the Patrol Kombat Computer (PKC) in
 response to command inputs. Details on important codes are listed below.
-Consult the Green Operations Manual for complete scenario process
-control instructions.
+Consult the VP XII Operations Manual (Green) for complete scenario
+process control instructions.
 
 =head2 PKC-0001
 
@@ -225,17 +244,17 @@ Executive overflow on guidance module.
 
 =head2 PKC-1220
 
-Background subspace comm link protocol error.
+Background subspace comm link protocol query.
 
 =head1 EXIT STATUS
 
-B<xomb> exits with a 0 on victory, and >0 in every other case.
+B<xomb> exits with a C<0> on victory, and C<< >0 >> in every other case.
 
 =head1 SEE ALSO
 
 L<Game::Xomb>, L<rogue(6)>
 
-Operations Manual (Green)
+VP XII Operations Manual (Green)
 
 =head1 AUTHOR
 
@@ -244,7 +263,7 @@ Jeremy Mates
 =head1 BUGS
 
 B<xomb> assumes that the terminal supports various ANSI or XTerm Control
-Sequences. Given the time constraints (7DRL 2020) not much portability
-testing has been done.
+Sequences. Given certain time constraints (7DRL 2020) not much
+portability testing has been done.
 
 =cut
