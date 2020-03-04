@@ -13,6 +13,7 @@ use warnings;
 use Carp qw(croak confess);    # DBG
 use Data::Dumper;              # DBG
 use List::Util qw(min);
+use List::UtilsBy qw(nsort_by);
 use POSIX qw(STDIN_FILENO TCIFLUSH tcflush);
 use Scalar::Util qw(weaken);
 use Term::ReadKey qw(GetTerminalSize ReadKey ReadMode);
@@ -132,7 +133,9 @@ our $Energy_Spent = 0;
 our $GGV          = 0;    # economy regulation index
 our $Level        = 1;    # current level
 our $Turn_Count   = 0;    # player moves
+
 our $FOV;                 # FOV cache
+our %Visible_Cell;
 
 # mostly so that causes of damage are all kept in one (testable) place
 #   cpanm App::Prove
@@ -181,11 +184,11 @@ our %Descript = (
     ACID,   'shallow acid pool',
     AMULET, AMULET_NAME,
     FLOOR,  'floor',
-    GATE,   'Stair to next level',
+    GATE,   'Gate to next level',
     GEM,    'Gemstone',
     GHAST,  'Gatling autocannon array',
     HERO,   'You',
-    HOLE,   'a hole in the ground',
+    HOLE,   'Hole',
     RUBBLE, 'some rubble',
     TROLL,  'Railgun Tower',
     WALL,   'just another brick in the wall',
@@ -290,6 +293,7 @@ our %Key_Commands = (
             return MOVE_FAILED, 0, 'PKC-0010';
         }
         log_message('Gate activated.');
+        sleep(0.05 + rand() / 3);
         undef $FOV;
         return MOVE_LVLUP, NLVL_COST;
     },
@@ -297,6 +301,7 @@ our %Key_Commands = (
         return MOVE_FAILED, 0, 'PKC-0004'
           if $Animates[HERO][LMC][MINERAL][SPECIES] != GATE;
         log_message('Gate activated.');
+        sleep(0.05 + rand() / 3);
         undef $FOV;
         return MOVE_LVLDOWN, NLVL_COST;
     },
@@ -324,10 +329,18 @@ our %Key_Commands = (
 sub animate_plunge {
     my ($mover, $dpoint) = @_;
     my $lmc = $mover->[LMC];
-    my $x   = $lmc->[VEGGIE] // $lmc->[MINERAL];
-    print at(map { MAP_DOFF + $_ } $lmc->[WHERE]->@*) . $x->[DISPLAY] .
-      at(map { MAP_DOFF + $_ } $dpoint->@*) . $mover->[DISPLAY];
-    sleep(0.01 + rand() / 3);
+    my $cell   = $lmc->[VEGGIE] // $lmc->[MINERAL];
+    print at(map { MAP_DOFF + $_ } $lmc->[WHERE]->@*)
+      . $cell->[DISPLAY]
+      . at(map { MAP_DOFF + $_ } $dpoint->@*)
+      . $mover->[DISPLAY];
+    # FOV is going to be wiped out, anyways
+    delete $Visible_Cell{ join ',', $dpoint->@* };
+    for my $point (values %Visible_Cell) {
+        sleep(0.005);
+        print at(map { MAP_DOFF + $_ } $point->@*), ' ';
+    }
+    sleep(0.05 + rand() / 3);
 }
 
 sub apply_damage {
@@ -343,7 +356,7 @@ sub apply_damage {
             # KLUGE assume source of damage was the player, otherwise
             # would need to always have a source object in @rest to
             # peek at...
-            sleep(0.01 + rand() / 3);
+            sleep(0.05 + rand() / 3);
             log_message('You destroy the ' . $Descript{ $ani->[SPECIES] });
             $ani->[BLACK_SPOT] = 1;
             undef $ani->[LMC][ANIMAL];
@@ -597,10 +610,10 @@ sub generate_level {
     $LMap[4][1][MINERAL] = $Things{ RUBBLE, };
     $LMap[2][0][MINERAL] = $Things{ ACID,   };
 
-    for my $x (10 .. 14) {
-        for my $y (10 .. 14) {
+    for my $x (10 .. 16) {
+        for my $y (10 .. 16) {
             $LMap[$y][$x][MINERAL] = $Things{ RUBBLE, };
-            $LMap[ $y + 5 ][ $x + 10 ][MINERAL] = $Things{ ACID, };
+            $LMap[ $y ][ $x + 10 ][MINERAL] = $Things{ ACID, };
         }
     }
 
@@ -913,23 +926,24 @@ sub move_drop {
     goto &manage_inventory;
 }
 
-# TODO will need to honor FOV
-# oh yeah TODO FOV support
 sub move_examine {
     my $row = $Animates[HERO][LMC][WHERE][PROW];
     my $col = $Animates[HERO][LMC][WHERE][PCOL];
     print AT_MSG_ROW, CLEAR_RIGHT, SHOW_CURSOR,
       "-- move cursor to view a cell. SHIFT moves faster. Esc to exit --";
     while (1) {
-        my $s = '';
-        for my $i (ANIMAL, VEGGIE) {
-            my $x = $LMap[$row][$col][$i];
-            $s .= $x->[DISPLAY] . ' ' . $Descript{ $x->[SPECIES] } . ' '
-              if defined $x;
+        my $loc = $col . ',' . $row;
+        my $s   = '';
+        if (exists $Visible_Cell{$loc}) {
+            for my $i (ANIMAL, VEGGIE) {
+                my $x = $LMap[$row][$col][$i];
+                $s .= $x->[DISPLAY] . ' ' . $Descript{ $x->[SPECIES] } . ' '
+                  if defined $x;
+            }
+            my $g = $LMap[$row][$col][MINERAL];
+            $s .= $g->[DISPLAY] . ' ' . $Descript{ $g->[SPECIES] }
+              if defined $g;
         }
-        my $g = $LMap[$row][$col][MINERAL];
-        $s .= $g->[DISPLAY] . ' ' . $Descript{ $g->[SPECIES] }
-          if defined $g;
         print at_row(STATUS_ROW), CLEAR_RIGHT, $s,
           at(map { MAP_DOFF + $_ } $col, $row);
         my $key = ReadKey(0);
@@ -1013,19 +1027,17 @@ sub nope_regarding {
     }
 }
 
-# (expensive) raycast around the player
 sub raycast_fov {
     my ($refresh, $lines) = @_;
-    my ($cx,      $cy)    = $Animates[HERO][LMC][WHERE]->@*;
-    my %blocked;
     if (!$refresh and defined $FOV) {
         print $FOV;
         return;
     }
-    my $s = '';
-    for my $r (0 .. MAP_ROWS - 1) {
-        $s .= at_row(MAP_DOFF + $r) . CLEAR_LINE;
-    }
+
+    my (%blocked, %byrow);
+    my ($cx, $cy) = $Animates[HERO][LMC][WHERE]->@*;
+    %Visible_Cell = ();
+
     # radius 7 points taken from Game:RaycastFOV cache
     for my $ep (
         [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],
@@ -1046,26 +1058,32 @@ sub raycast_fov {
         linecb(
             sub {
                 my ($col, $row, $iters) = @_;
-                # "the moon is a harsh mistress", FOV degrades at range
+
+                # "the moon is a harsh mistress" -- FOV degrades at range
                 return -1 if $iters - 4 > int rand 7;
+
                 my $loc = $col . ',' . $row;
                 return -1 if $blocked{$loc};
+
+                # FOV may also be blocked by walls, etc.
+                my $cell = $LMap[$row][$col][MINERAL];
+                if ($cell->[SPECIES] == WALL) {
+                    $blocked{$loc} = 1;
+                } elsif ($cell->[SPECIES] == RUBBLE) {
+                    $blocked{$loc} = 1 if 0 == int rand 2;
+                } elsif ($cell->[SPECIES] == ACID) {
+                    $blocked{$loc} = 1 if 0 == int rand 200;
+                }
+
+                return 0 if $Visible_Cell{$loc};
+                $Visible_Cell{$loc} = [$col,$row];
                 for my $i (ANIMAL, VEGGIE) {
                     if (defined $LMap[$row][$col][$i]) {
-                        $s .=
-                          at(map { MAP_DOFF + $_ } $col, $row) . $LMap[$row][$col][$i][DISPLAY];
+                        push $byrow{$row}->@*, [ $col, $LMap[$row][$col][$i][DISPLAY] ];
                         return 0;
                     }
                 }
-                my $x = $LMap[$row][$col][MINERAL];
-                $s .= at(map { MAP_DOFF + $_ } $col, $row) . $x->[DISPLAY];
-                if ($x->[SPECIES] == WALL) {
-                    $blocked{$loc} = 1;
-                } elsif ($x->[SPECIES] == RUBBLE) {
-                    $blocked{$loc} = 1 if 0 == int rand 20;
-                } elsif ($x->[SPECIES] == ACID) {
-                    $blocked{$loc} = 1 if 0 == int rand 500;
-                }
+                push $byrow{$row}->@*, [ $col, $cell->[DISPLAY] ];
                 return 0;
             },
             $cx,
@@ -1074,11 +1092,25 @@ sub raycast_fov {
             $cy + $ep->[1]
         );
     }
+
+    my $s = '';
+    for my $r (0 .. MAP_ROWS - 1) {
+        $s .= at_row(MAP_DOFF + $r) . CLEAR_RIGHT;
+    }
+    for my $r (nsort_by { $byrow{$_} } keys %byrow) {
+        $s .= at_row(MAP_DOFF + $r);
+        for my $ref (nsort_by { $_->[0] } $byrow{$r}->@*) {
+            $s .= at_col(MAP_DOFF + $ref->[0]) . $ref->[1];
+        }
+    }
+
+    # ensure @ is shown as FOV may not touch that cell
     $FOV =
         $s
       . at(map { MAP_DOFF + $_ } $cx, $cy)
       . $LMap[$cy][$cx][ANIMAL][DISPLAY];
     print $FOV;
+    $Visible_Cell{ $cx . ',' . $cy} = [$cx,$cy];
 }
 
 sub refresh_board {
@@ -1115,17 +1147,16 @@ sub roll {
 
 sub rubble_delay {
     my ($ani, $cost) = @_;
-    my $mod = 0;
-    if (int rand 4 == 0) {
+    if (int rand 2 == 0) {
         if ($ani->[SPECIES] == HERO) {
             # Ultima IV does this. too annoying?
-            # TODO probably want cli flag for this if keep it
-            sleep(0.01 + rand() / 3);
+            sleep(0.05 + rand() / 3);
             log_message('Slow progress!');
         }
-        $mod = $cost / 2 + 1 + int rand 4;
+        return int($cost / 2) + 2 + int rand 4;
+    } else {
+        return 2 + int rand 4;
     }
-    return $mod;    # to be added to the overall cost
 }
 
 sub score {
@@ -1284,7 +1315,10 @@ sub veggie_name {
 
 sub with_adjacent {
     my ($col, $row, $fn) = @_;
-    for my $adj ( [ -1, -1 ], [ -1, 0 ], [ -1, 1 ], [ 0, -1 ], [ 0, 1 ], [ 1,  -1 ], [ 1,  0 ], [ 1,  1 ]) {
+    for my $adj (
+        [ -1, -1 ], [ -1, 0 ],  [ -1, 1 ], [ 0, -1 ],
+        [ 0,  1 ],  [ 1,  -1 ], [ 1,  0 ], [ 1, 1 ]
+    ) {
         $fn->($col + $adj->[PCOL], $row + $adj->[PROW]);
     }
 }

@@ -21,6 +21,7 @@ Module::Build->new(
         'perl'          => '5.24.0',
         'strict'        => 0,
         'List::Util'    => 0,
+        'List::UtilsBy' => 0,
         'POSIX'         => 0,
         'Scalar::Util'  => 0,
         'Term::ReadKey' => 0,
