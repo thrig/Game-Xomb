@@ -95,7 +95,9 @@ the screen shows the level map. Various L</"Symbols"> occupy this space.
 
 =head2 Commands
 
-The C<?> key in-game will show a list of commands available.
+The C<?> key in-game will show a list of commands available. With
+numlock enabled a numeric keypad may be able to be used to navigate in
+additional to the traditional L<rogue(6)> keys.
 
 =head2 Symbols
 
@@ -140,7 +142,7 @@ Acid pond. Probably an OSHA violation.
 
 =item C<.>
 
-An empty cell. Generally safe to step in.
+An empty cell.
 
 =item C<o>
 

@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.08';
+our $VERSION = '0.09';
 
 use 5.24.0;
 use warnings;
@@ -57,13 +57,12 @@ sub AT_HPBAR ()      { "\e[24;14H" }
 sub AT_CELLOBJS ()   { "\e[24;68H" }
 sub AT_ERR_CODE ()   { "\e[24;72H" }
 
-# how big and where to put the level map
 # NOTE also set in Xomb.xs for map-aware functions
-sub MAP_COLS ()     { 78 }
-sub MAP_ROWS ()     { 22 }
-sub MAP_DISP_OFF () { 2 }
+sub MAP_COLS () { 78 }
+sub MAP_ROWS () { 22 }
+sub MAP_DOFF () { 2 }    # display offset for map on screen
 
-# level map is row, col while points are [ col, row ]
+# NOTE level map is row, col while points are [ col, row ]
 sub PROW () { 1 }
 sub PCOL () { 0 }
 
@@ -133,6 +132,7 @@ our $Energy_Spent = 0;
 our $GGV          = 0;    # economy regulation index
 our $Level        = 1;    # current level
 our $Turn_Count   = 0;    # player moves
+our $FOV;                 # FOV cache
 
 # mostly so that causes of damage are all kept in one (testable) place
 #   cpanm App::Prove
@@ -226,12 +226,17 @@ our %Bump_Into = (
             apply_passives($mover, $cost / 2, 0);
             my $ret = MOVE_OKAY;
             if ($mover->[SPECIES] == HERO) {
+                # TODO this log needs for example expedited display...
                 log_message('You plunge into the hole.');
+                animate_plunge($mover, $dpoint);
+                relocate($mover, $dpoint);
                 log_code('PKC-0099');
+                undef $FOV;
                 $ret = MOVE_LVLDOWN;
             } else {
                 # remove from play, for now
                 $mover->[BLACK_SPOT] = 1;
+                undef $mover->[LMC][ANIMAL];
             }
             apply_damage($mover, 'falling');
             return $ret, $cost;
@@ -243,63 +248,6 @@ our %Bump_Into = (
         }
     },
 );
-
-# for FOV see draw_level. derived from Game::RaycastFOV
-#<<<
-our %Edge_Coord = (
-    1 => [
-        [ 1,  0 ], [ 1,  1 ],  [ 0, 1 ],  [ -1, 1 ],
-        [ -1, 0 ], [ -1, -1 ], [ 0, -1 ], [ 1,  -1 ]
-    ],
-2 => [[2,0],[2,1],[1,1],[1,2],[0,2],[-1,2],[-1,1],[-2,1],[-2,0],[-2,-1],[-1,-1] ,[-1,-2],[0,-2],[1,-2],[1,-1],[2,-1]],
-    3 => [
-        [ 3,  0 ],  [ 3,  1 ],  [ 2,  1 ],  [ 2,  2 ],
-        [ 1,  2 ],  [ 1,  3 ],  [ 0,  3 ],  [ -1, 3 ],
-        [ -1, 2 ],  [ -2, 2 ],  [ -2, 1 ],  [ -3, 1 ],
-        [ -3, 0 ],  [ -3, -1 ], [ -2, -1 ], [ -2, -2 ],
-        [ -1, -2 ], [ -1, -3 ], [ 0,  -3 ], [ 1,  -3 ],
-        [ 1,  -2 ], [ 2,  -2 ], [ 2,  -1 ], [ 3,  -1 ]
-    ],
-4 => 
-[[4,0],[4,1],[4,2],[3,2],[3,3],[2,3],[2,4],[1,4],[0,4],[-1,4],[-2,4],[-2,3
- ],[-3,3],[-3,2],[-4,2],[-4,1],[-4,0],[-4,-1],[-4,-2],[-3,-2],[-3,-3],[-2,-
- 3],[-2,-4],[-1,-4],[0,-4],[1,-4],[2,-4],[2,-3],[3,-3],[3,-2],[4,-2],[4,-1]
- ],
-    5 => [
-        [ 5,  0 ],  [ 5,  1 ],  [ 5,  2 ],  [ 4,  2 ],
-        [ 4,  3 ],  [ 3,  3 ],  [ 3,  4 ],  [ 2,  4 ],
-        [ 2,  5 ],  [ 1,  5 ],  [ 0,  5 ],  [ -1, 5 ],
-        [ -2, 5 ],  [ -2, 4 ],  [ -3, 4 ],  [ -3, 3 ],
-        [ -4, 3 ],  [ -4, 2 ],  [ -5, 2 ],  [ -5, 1 ],
-        [ -5, 0 ],  [ -5, -1 ], [ -5, -2 ], [ -4, -2 ],
-        [ -4, -3 ], [ -3, -3 ], [ -3, -4 ], [ -2, -4 ],
-        [ -2, -5 ], [ -1, -5 ], [ 0,  -5 ], [ 1,  -5 ],
-        [ 2,  -5 ], [ 2,  -4 ], [ 3,  -4 ], [ 3,  -3 ],
-        [ 4,  -3 ], [ 4,  -2 ], [ 5,  -2 ], [ 5,  -1 ]
-    ],
-6 => [[6,0],[6,1],[6,2],[5,2],[5,3],[5,4],[4,4],[4,5],[3,5],[2,5],[2,6],[1,6],[
- 0,6],[-1,6],[-2,6],[-2,5],[-3,5],[-4,5],[-4,4],[-5,4],[-5,3],[-5,2],[-6,2]
- ,[-6,1],[-6,0],[-6,-1],[-6,-2],[-5,-2],[-5,-3],[-5,-4],[-4,-4],[-4,-5],[-3
- ,-5],[-2,-5],[-2,-6],[-1,-6],[0,-6],[1,-6],[2,-6],[2,-5],[3,-5],[4,-5],[4,
- -4],[5,-4],[5,-3],[5,-2],[6,-2],[6,-1]],
-    7 => [
-        [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],
-        [ 6,  3 ],  [ 6,  4 ],  [ 5,  4 ],  [ 5,  5 ],
-        [ 4,  5 ],  [ 4,  6 ],  [ 3,  6 ],  [ 2,  6 ],
-        [ 2,  7 ],  [ 1,  7 ],  [ 0,  7 ],  [ -1, 7 ],
-        [ -2, 7 ],  [ -2, 6 ],  [ -3, 6 ],  [ -4, 6 ],
-        [ -4, 5 ],  [ -5, 5 ],  [ -5, 4 ],  [ -6, 4 ],
-        [ -6, 3 ],  [ -6, 2 ],  [ -7, 2 ],  [ -7, 1 ],
-        [ -7, 0 ],  [ -7, -1 ], [ -7, -2 ], [ -6, -2 ],
-        [ -6, -3 ], [ -6, -4 ], [ -5, -4 ], [ -5, -5 ],
-        [ -4, -5 ], [ -4, -6 ], [ -3, -6 ], [ -2, -6 ],
-        [ -2, -7 ], [ -1, -7 ], [ 0,  -7 ], [ 1,  -7 ],
-        [ 2,  -7 ], [ 2,  -6 ], [ 3,  -6 ], [ 4,  -6 ],
-        [ 4,  -5 ], [ 5,  -5 ], [ 5,  -4 ], [ 6,  -4 ],
-        [ 6,  -3 ], [ 6,  -2 ], [ 7,  -2 ], [ 7,  -1 ]
-    ],
-);
-#>>>
 
 # for looking around with, see move_examine
 our %Examine_Offsets = (
@@ -315,23 +263,23 @@ our %Examine_Offsets = (
 
 # these define what happens when various keys are mashed
 our %Key_Commands = (
-    'R' => \&move_remove,
     'E' => sub { clear_code(); return MOVE_FAILED, 0 },
-    'g' => \&move_pickup,
-    ',' => \&move_pickup,
+    'R' => \&move_remove,
     'i' => \&manage_inventory,
     'd' => \&move_drop,
-    'h' => move_player_maker(-1, +0, DEFAULT_COST),       # left
-    'j' => move_player_maker(+0, +1, DEFAULT_COST),       # down
-    'k' => move_player_maker(+0, -1, DEFAULT_COST),       # up
-    'l' => move_player_maker(+1, +0, DEFAULT_COST),       # right
+    'e' => \&move_use,
+    'h' => move_player_maker(-1, +0, DEFAULT_COST),
+    'j' => move_player_maker(+0, +1, DEFAULT_COST),
+    'k' => move_player_maker(+0, -1, DEFAULT_COST),
+    'l' => move_player_maker(+1, +0, DEFAULT_COST),
     'y' => move_player_maker(-1, -1, DIAG_COST),
     'u' => move_player_maker(+1, -1, DIAG_COST),
     'b' => move_player_maker(-1, +1, DIAG_COST),
     'n' => move_player_maker(+1, +1, DIAG_COST),
+    ',' => \&move_pickup,
+    'g' => \&move_pickup,
     '.' => \&move_nop,                                    # rest
     ' ' => \&move_nop,                                    # also rest
-    'e' => \&move_use,
     'v' => sub { log_message('xomb ' . $VERSION); return MOVE_FAILED, 0 },
     'x' => \&move_examine,
     '<' => sub {
@@ -342,12 +290,14 @@ our %Key_Commands = (
             return MOVE_FAILED, 0, 'PKC-0010';
         }
         log_message('Gate activated.');
+        undef $FOV;
         return MOVE_LVLUP, NLVL_COST;
     },
     '>' => sub {
         return MOVE_FAILED, 0, 'PKC-0004'
           if $Animates[HERO][LMC][MINERAL][SPECIES] != GATE;
         log_message('Gate activated.');
+        undef $FOV;
         return MOVE_LVLDOWN, NLVL_COST;
     },
     '?' => sub { help_screen();   return MOVE_FAILED, 0 },
@@ -363,10 +313,22 @@ our %Key_Commands = (
     "\032" => sub { return MOVE_FAILED, 0, 'PKC-1220' },      # <C-z>
     "\033" => sub { return MOVE_FAILED, 0 },
 );
+# and a weak effort at numpad support
+@Key_Commands{qw/1 2 3 4 5 6 7 8 9/} =
+  @Key_Commands{qw/b j n h . l y k u/};
 
 ########################################################################
 #
 # SUBROUTINES
+
+sub animate_plunge {
+    my ($mover, $dpoint) = @_;
+    my $lmc = $mover->[LMC];
+    my $x   = $lmc->[VEGGIE] // $lmc->[MINERAL];
+    print at(map { MAP_DOFF + $_ } $lmc->[WHERE]->@*) . $x->[DISPLAY] .
+      at(map { MAP_DOFF + $_ } $dpoint->@*) . $mover->[DISPLAY];
+    sleep(0.01 + rand() / 3);
+}
 
 sub apply_damage {
     my ($ani, $cause, @rest) = @_;
@@ -381,9 +343,12 @@ sub apply_damage {
             # KLUGE assume source of damage was the player, otherwise
             # would need to always have a source object in @rest to
             # peek at...
+            sleep(0.01 + rand() / 3);
             log_message('You destroy the ' . $Descript{ $ani->[SPECIES] });
             $ani->[BLACK_SPOT] = 1;
+            undef $ani->[LMC][ANIMAL];
         }
+        undef $FOV;
     }
 }
 
@@ -453,7 +418,7 @@ sub between {
           "-- press Esc to continue --";
         await_quit();
         print HIDE_CURSOR;
-        refresh_board();
+        refresh_board(scalar @log);
     }
 
     # much of the complication is to dim progressively older information
@@ -495,41 +460,6 @@ sub display_hitpoints {
     return AT_HPBAR . "SP[\e[1m" . $hpbar . TERM_NORM . ']';
 }
 
-# (expensive) raycast around the player
-sub draw_level {
-    my $sp = $Animates[HERO][LMC][WHERE];
-    my $radius = 4; # player FOV KLUGE put in STASH somewhere
-    my %blocked;
-    my $s = '';
-    for my $r (0 .. MAP_ROWS - 1) {
-        $s .= at_row(MAP_DISP_OFF + $r) . CLEAR_LINE;
-    }
-    for my $ep ($Edge_Coord{$radius}->@*) {
-        linecb(
-            sub {
-                my ($col, $row) = @_;
-                return -1 if $blocked{ $col . ',' . $row };
-                for my $i (ANIMAL, VEGGIE) {
-                    if (defined $LMap[$row][$col][$i]) {
-                        $s .= at(map { MAP_DISP_OFF + $_ } $col, $row)
-                          . $LMap[$row][$col][$i][DISPLAY];
-                        return 0;
-                    }
-                }
-                my $x = $LMap[$row][$col][MINERAL];
-                $s .= at(map { MAP_DISP_OFF + $_ } $col, $row) . $x->[DISPLAY];
-                $blocked{ $col . ',' . $row } = 1 if $x->[SPECIES] == WALL;
-                return 0;
-            },
-            $sp->@*,
-            $sp->[0] + $ep->[0],
-            $sp->[1] + $ep->[1]
-        );
-    }
-    print $s, at(map { MAP_DISP_OFF + $_ } $sp->@*),
-      $LMap[ $sp->[PROW] ][ $sp->[PCOL] ][ANIMAL][DISPLAY];
-}
-
 sub fisher_yates_shuffle {
     my ($array) = @_;
     my $i;
@@ -558,8 +488,8 @@ sub game_loop {
 
     print ALT_SCREEN, HIDE_CURSOR, HIDE_POINTER, CLEAR_SCREEN, TERM_NORM;
     log_message('Welcome to xomb');
+    raycast_fov(1);
     show_top_message();
-    draw_level();
     show_status_bar();
 
   GLOOP: while (1) {
@@ -588,6 +518,8 @@ sub game_loop {
               if $status == MOVE_LVLDOWN or $status == MOVE_LVLUP;
             if ($ani->[SPECIES] == HERO) {
                 #warn "HERO RET COST $cost\n";
+                #raycast_fov() if $new_level == 0;
+                # XXXX probably don't need these
                 show_top_message();
                 show_status_bar();
             }
@@ -597,6 +529,7 @@ sub game_loop {
             $Level += $new_level;
             has_won() if $Level <= 0;
             generate_level();
+            raycast_fov(1);
             # NOTE other half of this is applied in the Bump-into-HOLE
             # logic, elsewhere. this last half happens here as the new
             # level is not yet available prior to the fall
@@ -606,9 +539,7 @@ sub game_loop {
         }
 
       CLEANUP:
-        @Animates =
-          grep { $_->[BLACK_SPOT] ? undef $_->[LMC][ANIMAL] : 1 } @Animates;
-        draw_level();
+        @Animates = grep { !$_->[BLACK_SPOT] } @Animates;
     }
 }
 
@@ -665,6 +596,13 @@ sub generate_level {
     $LMap[3][1][MINERAL] = $Things{ RUBBLE, };
     $LMap[4][1][MINERAL] = $Things{ RUBBLE, };
     $LMap[2][0][MINERAL] = $Things{ ACID,   };
+
+    for my $x (10 .. 14) {
+        for my $y (10 .. 14) {
+            $LMap[$y][$x][MINERAL] = $Things{ RUBBLE, };
+            $LMap[ $y + 5 ][ $x + 10 ][MINERAL] = $Things{ ACID, };
+        }
+    }
 
     make_monster(
         0, 3,
@@ -749,14 +687,14 @@ sub help_screen {
     must be answered with Y to carry out the action; N or n or Esc
     will reject the action. Map symbols include:
 
-      @ - you   % - gate    * - gemstone  # - wall  . - empty cell
-      ~ - acid  ^ - rubble
+      @  you     % gate    * gemstone    o hole in ground
+      #  wall    ~ acid    ^ rubble      . empty cell
 
     Consult xomb(1) or `perldoc xomb` for additional documentation.
 HELP_SCREEN
     await_quit();
     print HIDE_CURSOR;
-    refresh_board();
+    refresh_board(20);
 }
 
 # something something Panopticon
@@ -794,7 +732,8 @@ sub make_amulet {
     my ($col, $row) = @_;
     state $made = 0;
     # DBG will need to make it multiple times if they jump through a
-    # hole and miss where we put it
+    # hole and miss where we put it, but not if they have one in
+    # stock?
     if ($made) {
         warn "already made an amulet\n";
         return;
@@ -938,7 +877,7 @@ sub manage_inventory {
         }
     }
     print HIDE_CURSOR;
-    refresh_board();
+    refresh_board(MSG_ROW + $offset);
     return MOVE_FAILED, 0;
 }
 
@@ -992,7 +931,7 @@ sub move_examine {
         $s .= $g->[DISPLAY] . ' ' . $Descript{ $g->[SPECIES] }
           if defined $g;
         print at_row(STATUS_ROW), CLEAR_RIGHT, $s,
-          at(map { MAP_DISP_OFF + $_ } $col, $row);
+          at(map { MAP_DOFF + $_ } $col, $row);
         my $key = ReadKey(0);
         last if $key eq "\033" or $key eq 'q';
         my $distance = 1;
@@ -1040,7 +979,7 @@ sub move_player_maker {
     sub {
         my @ret = move_animate($Animates[HERO], $cols, $rows, $mvcost);
         #warn "DBG COST @ret\n";
-        draw_level();
+        raycast_fov($ret[0] == MOVE_FAILED ? 0 : 1);
         print display_cellobjs();
         return @ret;
     }
@@ -1074,16 +1013,87 @@ sub nope_regarding {
     }
 }
 
+# (expensive) raycast around the player
+sub raycast_fov {
+    my ($refresh, $lines) = @_;
+    my ($cx,      $cy)    = $Animates[HERO][LMC][WHERE]->@*;
+    my %blocked;
+    if (!$refresh and defined $FOV) {
+        print $FOV;
+        return;
+    }
+    my $s = '';
+    for my $r (0 .. MAP_ROWS - 1) {
+        $s .= at_row(MAP_DOFF + $r) . CLEAR_LINE;
+    }
+    # radius 7 points taken from Game:RaycastFOV cache
+    for my $ep (
+        [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],
+        [ 6,  3 ],  [ 6,  4 ],  [ 5,  4 ],  [ 5,  5 ],
+        [ 4,  5 ],  [ 4,  6 ],  [ 3,  6 ],  [ 2,  6 ],
+        [ 2,  7 ],  [ 1,  7 ],  [ 0,  7 ],  [ -1, 7 ],
+        [ -2, 7 ],  [ -2, 6 ],  [ -3, 6 ],  [ -4, 6 ],
+        [ -4, 5 ],  [ -5, 5 ],  [ -5, 4 ],  [ -6, 4 ],
+        [ -6, 3 ],  [ -6, 2 ],  [ -7, 2 ],  [ -7, 1 ],
+        [ -7, 0 ],  [ -7, -1 ], [ -7, -2 ], [ -6, -2 ],
+        [ -6, -3 ], [ -6, -4 ], [ -5, -4 ], [ -5, -5 ],
+        [ -4, -5 ], [ -4, -6 ], [ -3, -6 ], [ -2, -6 ],
+        [ -2, -7 ], [ -1, -7 ], [ 0,  -7 ], [ 1,  -7 ],
+        [ 2,  -7 ], [ 2,  -6 ], [ 3,  -6 ], [ 4,  -6 ],
+        [ 4,  -5 ], [ 5,  -5 ], [ 5,  -4 ], [ 6,  -4 ],
+        [ 6,  -3 ], [ 6,  -2 ], [ 7,  -2 ], [ 7,  -1 ]
+    ) {
+        linecb(
+            sub {
+                my ($col, $row, $iters) = @_;
+                # "the moon is a harsh mistress", FOV degrades at range
+                return -1 if $iters - 4 > int rand 7;
+                my $loc = $col . ',' . $row;
+                return -1 if $blocked{$loc};
+                for my $i (ANIMAL, VEGGIE) {
+                    if (defined $LMap[$row][$col][$i]) {
+                        $s .=
+                          at(map { MAP_DOFF + $_ } $col, $row) . $LMap[$row][$col][$i][DISPLAY];
+                        return 0;
+                    }
+                }
+                my $x = $LMap[$row][$col][MINERAL];
+                $s .= at(map { MAP_DOFF + $_ } $col, $row) . $x->[DISPLAY];
+                if ($x->[SPECIES] == WALL) {
+                    $blocked{$loc} = 1;
+                } elsif ($x->[SPECIES] == RUBBLE) {
+                    $blocked{$loc} = 1 if 0 == int rand 20;
+                } elsif ($x->[SPECIES] == ACID) {
+                    $blocked{$loc} = 1 if 0 == int rand 500;
+                }
+                return 0;
+            },
+            $cx,
+            $cy,
+            $cx + $ep->[0],
+            $cy + $ep->[1]
+        );
+    }
+    $FOV =
+        $s
+      . at(map { MAP_DOFF + $_ } $cx, $cy)
+      . $LMap[$cy][$cx][ANIMAL][DISPLAY];
+    print $FOV;
+}
+
 sub refresh_board {
-    print CLEAR_SCREEN;
-    draw_level();
+    my ($lines) = @_;
+    print CLEAR_SCREEN unless $lines;
+    raycast_fov(0, $lines);
     show_top_message();
-    show_status_bar();
+    show_status_bar()
+      if !defined $lines
+      or ($lines and $lines >= STATUS_ROW);
 }
 
 sub relocate {
     my ($ani, $dest) = @_;
-    my $src = $ani->[LMC][WHERE];
+    my $src      = $ani->[LMC][WHERE];
     my $dest_lmc = $LMap[ $dest->[PROW] ][ $dest->[PCOL] ];
     $dest_lmc->[ANIMAL] = $ani;
     undef $LMap[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
@@ -1105,7 +1115,6 @@ sub roll {
 
 sub rubble_delay {
     my ($ani, $cost) = @_;
-    #warn "in RUBBLE yo\n";
     my $mod = 0;
     if (int rand 4 == 0) {
         if ($ani->[SPECIES] == HERO) {
@@ -1271,6 +1280,13 @@ sub veggie_name {
         $s = $Descript{ $veg->[SPECIES] } // die "DBG uh what name??";
     }
     return $s;
+}
+
+sub with_adjacent {
+    my ($col, $row, $fn) = @_;
+    for my $adj ( [ -1, -1 ], [ -1, 0 ], [ -1, 1 ], [ 0, -1 ], [ 0, 1 ], [ 1,  -1 ], [ 1,  0 ], [ 1,  1 ]) {
+        $fn->($col + $adj->[PCOL], $row + $adj->[PROW]);
+    }
 }
 
 1;
