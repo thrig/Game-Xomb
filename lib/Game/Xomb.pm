@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.14';
+our $VERSION = '0.15';
 
 use 5.24.0;
 use warnings;
@@ -21,7 +21,7 @@ use Term::ReadKey qw(GetTerminalSize ReadKey ReadMode);
 use Time::HiRes qw(sleep);
 
 require XSLoader;
-XSLoader::load('Game::Xomb', $VERSION);
+XSLoader::load('Game::Xomb', $VERSION);    # linecb, walkcb
 
 ########################################################################
 #
@@ -78,19 +78,21 @@ sub VEGGIE ()  { 2 }    # amulet, gems, etc
 sub ANIMAL ()  { 3 }    # Animates
 
 # SPECIES
-sub HERO ()    { 0 }    # NOTE also used for @Animates slot
-sub GHAST ()   { 1 }
-sub MIMIC ()   { 2 }
-sub STALKER () { 3 }
-sub TROLL ()   { 4 }
-sub AMULET ()  { 5 }
-sub GEM ()     { 6 }
-sub HOLE ()    { 7 }
-sub FLOOR ()   { 8 }
-sub GATE ()    { 9 }    # stairs, rogue 3.6 style
-sub ACID ()    { 10 }
-sub RUBBLE ()  { 11 }
-sub WALL ()    { 12 }
+sub HERO ()    { 0 }     # NOTE also used for @Animates slot
+sub FUNGI ()   { 1 }
+sub GHAST ()   { 2 }
+sub MIMIC ()   { 3 }
+sub STALKER () { 4 }
+sub TROLL ()   { 5 }
+sub AMULET ()  { 6 }
+sub GEM ()     { 7 }
+sub SCROLL ()  { 8 }
+sub HOLE ()    { 9 }
+sub FLOOR ()   { 10 }
+sub GATE ()    { 11 }    # stairs, rogue 3.6 style
+sub ACID ()    { 12 }
+sub RUBBLE ()  { 13 }
+sub WALL ()    { 14 }
 
 sub AMULET_NAME ()  { 'Dragonstone' }
 sub AMULET_VALUE () { 1000 }
@@ -162,6 +164,7 @@ our %Damage_From = (
         my ($ani) = @_;
         goto $ani->[STASH][WEAPON][WEAP_DMG]->&*;
     },
+    # this can hurt
     falling => sub {
         my $dice   = 1;
         my $damage = 0;
@@ -173,15 +176,25 @@ our %Damage_From = (
         }
         return $damage;
     },
-    # listed here for reference but get called to through attackby.
+    # FUNGI does direct or splash damage; pretty sure that splash will
+    # only be friendly fire (check the fungi update logic)
+    plburn => sub {
+        my ($range) = @_;
+        my $dice = 4 - $range;
+        roll($dice, 3 * $dice);
+    },
+    plsplash => sub { roll(2, 3) },
+    # listed here for easy access but get called to through 'attackby'.
     # distance and environment effects will reduce this damage rate
     # over time
     GHAST,
-    sub { roll(3, 2) },
+    sub { roll(3, 2) - 2 },
+    HERO,
+    sub { roll(3, 6) },
     MIMIC,
     sub { roll(2, 6) - 1 },
     STALKER,
-    sub { roll(4, 4) },
+    sub { roll(4, 4) - 3 },
     TROLL,
     sub { roll(3, 6) + roll(2, 8) - 4 },
 );
@@ -191,45 +204,54 @@ our %Damage_From = (
 # weapon takes to recharge after a successful shot
 #
 #   W_RANGE  W_COST
-our %Xarci_Bedo =
-  (GHAST, [ 6, 5 ], MIMIC, [ 8, 11 ], STALKER, [ 12, 23 ], TROLL, [ 7, 31 ],);
+our %Weap_Stats = (
+    FUNGI,   [ 3,  31 ], GHAST, [ 5, 6 ], MIMIC, [ 8, 13 ],
+    STALKER, [ 12, 23 ], TROLL, [ 7, 37 ],
+);
 our %To_Hit = (
-    GHAST, [ 85, 73, 57, 40, 23, 11 ],
-    MIMIC, [ 0, 32, 45, 57, 70, 82, 65, 53, 41 ],
-    STALKER, [ 96, 96, 88, 88, 80, 80, 71, 63, 55, 46, 38, 30 ],
+    FUNGI, [ 100, 100, 100 ],
+    GHAST, [ 85, 73, 57, 40, 23 ],
+    MIMIC, [ 0, 11, 33, 57, 70, 82, 62, 47, 19 ],
+    STALKER, [ 88, 88, 88, 88, 80, 80, 71, 63, 55, 46, 38, 30 ],
     TROLL,   [ 90, 76, 62, 47, 33, 19, 11 ],
 );
 # TODO probably also want monster HP being set somewhere near here
 
 # these are "class objects"; in other words there is only one WALL in
-# all WALL cells (see reify, reduce, and the make_* routines)
+# all WALL cells (see reify and the make_* routines)
 #
 #              GENUS    SPECIES DISPLAY UPDATE (passive effects)
 our %Things = (
-    ACID,    [ MINERAL, ACID,    '~', \&passive_burn ],
-    AMULET,  [ VEGGIE,  AMULET,  ',' ],
-    FLOOR,   [ MINERAL, FLOOR,   '.' ],
-    GATE,    [ MINERAL, GATE,    '%' ],
-    GEM,     [ VEGGIE,  GEM,     '*' ],
-    GHAST,   [ ANIMAL,  GHAST,   'G', \&update_ghast ],
-    HERO,    [ ANIMAL,  HERO,    '@' ],
-    HOLE,    [ MINERAL, HOLE,    'o' ],
-    MIMIC,   [ ANIMAL,  MIMIC,   'M', \&update_mortar ],
-    RUBBLE,  [ MINERAL, RUBBLE,  '^' ],
-    STALKER, [ ANIMAL,  STALKER, 'Q', \&update_stalker ],
-    TROLL,   [ ANIMAL,  TROLL,   'T', \&update_troll ],
-    WALL,    [ MINERAL, WALL,    '#' ],
+    # animals
+    FUNGI,   [ ANIMAL, FUNGI,   'F', \&update_fungi ],
+    GHAST,   [ ANIMAL, GHAST,   'G', \&update_ghast ],
+    HERO,    [ ANIMAL, HERO,    '@', \&update_player ],
+    MIMIC,   [ ANIMAL, MIMIC,   'M', \&update_mortar ],
+    STALKER, [ ANIMAL, STALKER, 'Q', \&update_stalker ],
+    TROLL,   [ ANIMAL, TROLL,   'T', \&update_troll ],
+    # vegetables
+    AMULET, [ VEGGIE, AMULET, ',' ],
+    GEM,    [ VEGGIE, GEM,    '*' ],
+    SCROLL, [ VEGGIE, SCROLL, '?' ],
+    # minerals
+    ACID,   [ MINERAL, ACID,   '~', \&passive_burn ],
+    FLOOR,  [ MINERAL, FLOOR,  '.' ],
+    GATE,   [ MINERAL, GATE,   '%' ],
+    HOLE,   [ MINERAL, HOLE,   'o' ],
+    RUBBLE, [ MINERAL, RUBBLE, '^' ],
+    WALL,   [ MINERAL, WALL,   '#' ],
 );
 
 # NOTE these need to be fairly short as they must all fit in status line
 # and there could be three of them; see move_examine
 our %Descript = (
-    ACID,    'shallow acid pool', AMULET, AMULET_NAME,
-    FLOOR,   'floor',             GATE,   'Gate to next level',
-    GEM,     'gemstone',          GHAST,  'Gatling Autocannon',
-    HERO,    'You',               HOLE,   'Hole',
-    MIMIC,   'Mortar',            RUBBLE, 'bunch of rubble',
-    STALKER, 'Quad-laser Array',  TROLL,  'Railgun Tower',
+    ACID,    'shallow acid pool',  AMULET, AMULET_NAME,
+    FLOOR,   'floor',              FUNGI,  'Plasma Tower',
+    GATE,    'Gate',               GEM,    'gemstone',
+    GHAST,   'Gatling Autocannon', HERO,   'You',
+    HOLE,    'Hole',               MIMIC,  'Mortar',
+    RUBBLE,  'bunch of rubble',    SCROLL, 'unknown alien tech',
+    STALKER, 'Quad-laser Array',   TROLL,  'Railgun Tower',
     WALL,    'wall',
 );
 
@@ -350,15 +372,21 @@ sub apply_damage {
         if ($ani->[SPECIES] == HERO) {
             $ani->[DISPLAY] = '&';                 # the @ got unravelled
             $ani->[UPDATE]  = \&update_gameover;
+            # COSMETIC do we need a redraw here? XXXX TODO DBG
+            print at(map { MAP_DOFF + $_ } $ani->[LMC][WHERE]->@*), 'E';
         } else {
             # KLUGE assume source of damage was the player, otherwise
             # would need to always have a source object in @rest to
             # peek at...
-            $Violent_Sleep_Of_Reason = 1;
             log_message($Descript{ $ani->[SPECIES] } . ' destroyed.');
             $ani->[BLACK_SPOT] = 1;
             undef $ani->[LMC][ANIMAL];
         }
+    }
+    if ($ani->[SPECIES] == HERO) {
+        print display_hitpoints();
+        sleep(0.15);
+        $Violent_Sleep_Of_Reason = 1;
     }
 }
 
@@ -415,8 +443,8 @@ sub between {
         while (@log >= MSG_MAX) { shift @log }
         push @log, $message;
         $mcount++;
-        # COSMETIC dimming problems
-        #show_top_message();
+        # COSMETIC dimming problems but good to see immediate
+        show_top_message();
     }
 
     sub show_messages {
@@ -486,22 +514,24 @@ sub display_shieldup {
 sub does_hit {
     my ($dist, $weap) = @_;
     if ($dist > $weap->[W_RANGE]) {
+        # sleep monster until player can hike over to them
         my $away = $dist - $weap->[W_RANGE];
-        warn "AWAY by $away\n";
-        # wait until player can wander nearby before next update
-        warn "SNOOZE BY " . DEFAULT_COST * $away . "\n";
         return -1, DEFAULT_COST * $away;
     }
-    #   use Data::Dumper; warn Dumper $weap;
     warn "DIST $dist OFF "
       . (W_TOHIT + $dist - 1)
       . " TO-HIT "
       . $weap->[ W_TOHIT + $dist - 1 ] . "\n";
-    if ($weap->[ W_TOHIT + $dist - 1 ] > int rand 100) {
-        warn "MISS\n";
-        return 0, $weap->[W_COST];
-    }
-    return 1, $weap->[W_COST];
+    #my $hits;
+    #    if ($weap->[ W_TOHIT + $dist - 1 ] > int rand 100) {
+    #        $hits = 1;
+    #        warn "HIT\n";
+    #    } else  {
+    #        $hits = 0;
+    #       warn "MISS\n";
+    #    }
+    return ($weap->[ W_TOHIT + $dist - 1 ] > int rand 100), $weap->[W_COST];
+    #return $hits, $weap->[W_COST];
 }
 
 sub fisher_yates_shuffle {
@@ -646,6 +676,13 @@ sub generate_level {
         }
     }
 
+    make_monster(
+        1, 2,
+        species => FUNGI,
+        hp      => 32,
+        energy  => 10,
+    );
+
     #make_monster(
     #    0, 3,
     #    species => TROLL,
@@ -656,14 +693,14 @@ sub generate_level {
     make_monster(
         50, 0,
         species => TROLL,
-        hp      => 48,
+        hp      => 56,
         energy  => 10,
     );
 
     make_monster(
         7, 8,
         species => GHAST,
-        hp      => 32,
+        hp      => 48,
         energy  => 10,
     );
 
@@ -677,7 +714,7 @@ sub generate_level {
     make_monster(
         40, 20,
         species => STALKER,
-        hp      => 24,
+        hp      => 32,
         energy  => 10,
     );
 
@@ -842,7 +879,7 @@ sub make_monster {
       ($Things{ $params{species} }->@*, $params{energy}, $LMap[$row][$col]);
     $monst->[STASH]->@[ HITPOINTS, ECOST ] = ($params{hp}, CAN_MOVE);
     $monst->[STASH][WEAPON]->@[ WEAP_DMG, W_RANGE, W_COST ] =
-      ($Damage_From{ $params{species} }, $Xarci_Bedo{ $params{species} }->@*,);
+      ($Damage_From{ $params{species} }, $Weap_Stats{ $params{species} }->@*,);
     push $monst->[STASH][WEAPON]->@*, $To_Hit{ $params{species} }->@*;
 
     # TODO shouldn't need to know about this, either
@@ -855,11 +892,11 @@ sub make_monster {
 
 sub make_player {
     my $hero;
-    $hero->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE ] =
-      ($Things{ HERO, }->@*, CAN_MOVE, \&update_player,);
+    $hero->@[ GENUS, SPECIES, DISPLAY, UPDATE, ENERGY ] =
+      ($Things{ HERO, }->@*, CAN_MOVE,);
     $hero->[STASH]->@[ HITPOINTS, ECOST, LOOT ] = (START_HP, CAN_MOVE, []);
-    # basically they're a bulldozer
-    $hero->[STASH][WEAPON][WEAP_DMG] = sub { roll(3, 6) };
+    # bascially a bulldozer, unlike the other weapons
+    $hero->[STASH][WEAPON][WEAP_DMG] = $Damage_From{ HERO, };
     return $hero;
 }
 
@@ -1023,7 +1060,7 @@ sub move_gate_down {
     return MOVE_FAILED, 0, '0004'
       if $Animates[HERO][LMC][MINERAL][SPECIES] != GATE;
     log_message('Gate activated.');
-    $Violent_Sleep_Of_Reason = 1;
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
     return MOVE_LVLDOWN, NLVL_COST;
 }
 
@@ -1035,7 +1072,7 @@ sub move_gate_up {
         return MOVE_FAILED, 0, '0010';
     }
     log_message('Gate activated.');
-    $Violent_Sleep_Of_Reason = 1;
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
     return MOVE_LVLUP, NLVL_COST;
 }
 
@@ -1052,7 +1089,7 @@ sub move_pickup {
     return MOVE_FAILED, 0, '0102' if $loot->@* >= LOOT_MAX;
     if ($lmc->[VEGGIE][SPECIES] == AMULET) {
         log_message('Obtained ' . AMULET_NAME . '! Ascend to win!');
-        $Violent_Sleep_Of_Reason = 1;
+        $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
     } else {
         log_message('Picked up ' . veggie_name($lmc->[VEGGIE]));
     }
@@ -1236,7 +1273,7 @@ sub rubble_delay {
     if (int rand 2 == 0) {
         if ($ani->[SPECIES] == HERO) {
             # Ultima IV does this. too annoying?
-            $Violent_Sleep_Of_Reason = 1;
+            $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
             log_message('Slow progress!');
         }
         return int($cost / 2) + 2 + int rand 4;
@@ -1260,6 +1297,7 @@ sub show_status_bar {
 sub passive_burn {
     my ($ani, $obj, $duration, $newcell) = @_;
     log_code('007E') if $ani->[SPECIES] == HERO;
+    # half damage if they're quick about things
     apply_damage($ani, 'acidburn', $duration) unless $newcell;
 }
 
@@ -1274,16 +1312,51 @@ sub passive_msg_maker {
     }
 }
 
+sub plasma_annihilator {
+    my ($seen, $spread, $depth, $max) = @_;
+
+    return if $depth >= $max or !$spread->@*;
+
+    my ($col, $row) = $spread->[ rand $spread->@* ]->@*;
+    my $loc = $col . ',' . $row;
+    $seen->{$loc} = 1;
+    warn "SPREADS to $loc\n";
+
+    my $lmc = $LMap[$row][$col];
+    if (defined $lmc->[ANIMAL]) {
+        apply_damage($lmc->[ANIMAL], 'plsplash') if 0 == int rand 2;
+    } elsif ($lmc->[MINERAL][SPECIES] == WALL) {
+        reduce($lmc) if 0 == int rand 100;
+        return;
+    }
+    print at(map { MAP_DOFF + $_ } $col, $row),
+      (int rand 1000) ? 'x' : $Things{ AMULET, }->[DISPLAY]
+      if exists $Visible_Cell{$loc};
+
+    with_adjacent(
+        $col, $row,
+        sub {
+            my ($point) = @_;
+            my $adj = join ',', $point->@*;
+            return if $seen->{$adj};
+            push $spread->@*, $point;
+            @_ = ($seen, $spread, $depth + 1, $max);
+            goto &plasma_annihilator;
+        }
+    );
+}
+
 sub reduce {
     my ($lmc) = @_;
-    $lmc->[MINERAL] = [ $lmc->[MINERAL]->@* ];
-    if ($lmc->[MINERAL][SPECIES] == WALL) {
-        $lmc->[MINERAL]->@[ SPECIES, DISPLAY ] =
-          $Things{ RUBBLE, }->@[ SPECIES, DISPLAY ];
-    } elsif ($lmc->[MINERAL][SPECIES] == RUBBLE) {
-        $lmc->[MINERAL]->@[ SPECIES, DISPLAY ] =
-          $Things{ FLOOR, }->@[ SPECIES, DISPLAY ];
+    if (exists $Visible_Cell{ join ',', $lmc->[WHERE]->@* }) {
+        log_message('A '
+              . $Descript{ $lmc->[MINERAL][SPECIES] }
+              . ' explodes in a shower of fragments!');
     }
+    # rubble reification
+    $lmc->[MINERAL] = [ $lmc->[MINERAL]->@* ];
+    $lmc->[MINERAL]->@[ SPECIES, DISPLAY ] =
+      $Things{ RUBBLE, }->@[ SPECIES, DISPLAY ];
 }
 
 # similar to tu'a in Lojban
@@ -1322,6 +1395,71 @@ sub update_gameover {
     }
     $count++;
     return MOVE_OKAY, DEFAULT_COST;
+}
+
+sub update_fungi {
+    my ($self) = @_;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my $weap = $self->[STASH][WEAPON];
+
+    my ($hits, $cost) =
+      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    return MOVE_OKAY, $cost if $hits == -1;
+
+    my %seen;
+    my $loc = $mcol . ',' . $mrow;
+    print at(map { MAP_DOFF + $_ } $mcol, $mrow), 'X'
+      if exists $Visible_Cell{$loc};
+    $seen{$loc} = 1;
+
+    my @spread;
+    with_adjacent(
+        $mcol, $mrow,
+        sub {
+            my $loc = join ',', $_[0]->@*;
+            $seen{$loc} = 1;
+            return if int rand 10 < 8;
+            print at(map { MAP_DOFF + $_ } $_[0]->@*), 'X'
+              if exists $Visible_Cell{$loc};
+            push @spread, $_[0];
+        }
+    );
+
+    walkcb(
+        sub {
+            my ($col, $row, $iters) = @_;
+            my $lmc = $LMap[$row][$col];
+            my $loc = $col . ',' . $row;
+            $seen{$loc} = 1;
+            if (defined $lmc->[ANIMAL]) {
+                warn "PLASMA TO-HIT in $iters\n";
+                apply_damage($lmc->[ANIMAL], 'plburn', $iters) if 0 == int rand $iters;
+            } elsif ($lmc->[MINERAL][SPECIES] == WALL) {
+                reduce($lmc) if 0 == int rand 20;
+                return -1;
+            }
+            print at(map { MAP_DOFF + $_ } $col, $row), (int rand $iters <= 1) ? 'X' : 'x'
+              if exists $Visible_Cell{$loc};
+            push @spread, [ $col, $row ];
+            return $iters >= $weap->[W_RANGE] ? -1 : 0;
+        },
+        $mcol,
+        $mrow,
+        $tcol,
+        $trow
+    );
+
+    if (@spread) {
+        my $max = 3;
+        $max = 5 if 0 == int rand 100;
+        $max = 7 if 0 == int rand 1000;
+        plasma_annihilator(\%seen, \@spread, 2, $max);
+    }
+
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
+
+    return MOVE_OKAY, $cost;
 }
 
 sub update_ghast {
@@ -1372,7 +1510,7 @@ sub update_ghast {
         $trow
     );
 
-    return MOVE_OKAY, DEFAULT_COST unless @path;
+    return MOVE_OKAY, $cost unless @path;
 
     for my $point (@path) {
         my $loc = join ',', $point->@*;
@@ -1393,9 +1531,9 @@ sub update_ghast {
         print at(map { MAP_DOFF + $_ } $tcol, $trow), $cell->[DISPLAY];
     }
 
-    $Violent_Sleep_Of_Reason = 1;
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
 
-    return MOVE_OKAY, $weap->[W_COST];
+    return MOVE_OKAY, $cost;
 }
 
 sub update_mortar {
@@ -1410,7 +1548,7 @@ sub update_mortar {
 
     my @nearby;
     if ($hits == 0) {
-        return MOVE_OKAY, $cost if 0 == int rand 6;
+        return MOVE_OKAY, $cost if 0 == int rand 3;
         with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
     }
 
@@ -1433,23 +1571,24 @@ sub update_mortar {
         $tcol,
         $trow
     );
-    return MOVE_OKAY, DEFAULT_COST unless $take_shot;
+    return MOVE_OKAY, $cost unless $take_shot;
 
     if (@nearby) {
         log_message('A mortar shell explodes nearby!');
         my ($ncol, $nrow) = $nearby[ rand @nearby ]->@*;
-        my $buddy = $LMap[$nrow][$ncol][ANIMAL];
+        my $lmc   = $LMap[$nrow][$ncol];
+        my $buddy = $lmc->[ANIMAL];
         if (defined $buddy) {
             apply_damage($buddy, 'attackby', $self);
-        } else {
-            reduce($LMap[$nrow][$ncol]) if 0 == int rand 20;
+        } elsif ($lmc->[SPECIES] == WALL and 0 == int rand 20) {
+            reduce($lmc);
         }
     } else {
         log_message('A mortar shell strikes you!');
         apply_damage($Animates[HERO], 'attackby', $self);
     }
 
-    return MOVE_OKAY, $weap->[W_COST];
+    return MOVE_OKAY, $cost;
 }
 
 sub update_player {
@@ -1527,7 +1666,6 @@ sub update_troll {
 
     if ($hits == 0) {
         return MOVE_OKAY, DEFAULT_COST if 0 == int rand 2;
-        # ... but sometimes bullet goes somewhere
         $missed = 1;
     }
 
@@ -1580,7 +1718,7 @@ sub update_troll {
         $tcol,
         $trow
     );
-    return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
+    return MOVE_OKAY, $cost unless $take_shot and @path;
 
     for my $point (@path) {
         my $loc = join ',', $point->@*;
@@ -1590,12 +1728,7 @@ sub update_troll {
     my $loc = $tcol . ',' . $trow;
     my $lmc = $LMap[$trow][$tcol];
     if ($property_damage) {
-        my $cell = $lmc->[MINERAL];
-        reduce($LMap[$trow][$tcol]);
-        if (exists $Visible_Cell{$loc}) {
-            log_message(
-                'A ' . $Descript{ $cell->[SPECIES] } . ' explodes in a shower of fragments!');
-        }
+        reduce($lmc);
     } else {
         if ($missed) {
             my $buddy = $LMap[$trow][$tcol][ANIMAL];
@@ -1610,9 +1743,9 @@ sub update_troll {
         print at(map { MAP_DOFF + $_ } $tcol, $trow), $cell->[DISPLAY];
     }
 
-    $Violent_Sleep_Of_Reason = 1;
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
 
-    return MOVE_OKAY, $weap->[W_COST];
+    return MOVE_OKAY, $cost;
 }
 
 # like shooter but can only fire across totally open ground. advanced
@@ -1652,7 +1785,7 @@ sub update_stalker {
         $tcol,
         $trow
     );
-    return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
+    return MOVE_OKAY, $cost unless $take_shot and @path;
 
     for my $point (@path) {
         my $loc = join ',', $point->@*;
@@ -1661,7 +1794,7 @@ sub update_stalker {
     }
     apply_damage($Animates[HERO], 'attackby', $self);
 
-    $Violent_Sleep_Of_Reason = 1;
+    $Violent_Sleep_Of_Reason = $Violent_Sleep_Of_Reason ? 0 : 1;
 
     return MOVE_OKAY, $weap->[W_COST];
 }

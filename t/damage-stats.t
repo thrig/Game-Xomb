@@ -13,40 +13,32 @@ use Test::Most;
 my $trials = 1000;
 
 my $count     = keys %Game::Xomb::Damage_From;
-my $testcount = $count * 3;
+my $testcount = $count * 3 + 6;
 
 plan tests => $testcount;
 
 my $hero = Game::Xomb::make_player();
 
+my %args = (
+    acidburn => [qw/10/],    # $duration, default
+    attackby => [$hero],
+    falling  => [qw//],      # smaller body does not matter to Gravity
+    plspash  => [qw//],
+);
+
+my @outcomes;
+
 SKIP: {
     skip "no stats without XOMB_STATS set", $testcount
       unless $ENV{XOMB_STATS};
 
-    my %args = (
-        acidburn => [qw/10/],    # $duration
-        attackby => [$hero],
-        falling  => [qw//],      # smaller body does not matter to Gravity
-    );
-
-    my @outcomes;
     for my $name (sort { $a cmp $b } keys %Game::Xomb::Damage_From) {
-        my $fn  = $Game::Xomb::Damage_From{$name};
-        my $ret = $fn->($args{$name}->@*);
-        # was there somewhat viable output from the fn?
-        ok looks_like_number($ret);
-        is $ret, int $ret;
-
-        $name = $Game::Xomb::Things{ $name }->[Game::Xomb::DISPLAY] if exists $Game::Xomb::Things{ $name };
-
-        my @ret = map { $fn->($args{$name}->@*) } 1 .. $trials;
-        my ($mean, $min, $max) = mean(\@ret);
-        my $sd = sd(\@ret, $mean);
-        push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean,
-          $sd, $min, $max;
-
-        # it isn't good to be negative
-        ok $min >= 0;
+        my $fn = $Game::Xomb::Damage_From{$name};
+        if ($name eq 'plburn') {
+            tally($fn, $name . $_, $_) for 1 .. 3;
+        } else {
+            tally($fn, $name, $args{$name}->@*);
+        }
     }
     diag "sample damage - mean sd [min,max]:\n", @outcomes;
 }
@@ -68,4 +60,24 @@ sub mean {
 sub sd {
     my ($ref, $mean) = @_;
     return sqrt mean([ map { ($_ - $mean)**2 } $ref->@* ]);
+}
+
+sub tally {
+    my ($fn, $name, @rest) = @_;
+    my $ret = $fn->(@rest);
+    # was there somewhat viable output from the fn?
+    ok looks_like_number($ret);
+    is $ret, int $ret;
+
+    $name = $Game::Xomb::Things{$name}->[Game::Xomb::DISPLAY]
+      if exists $Game::Xomb::Things{$name};
+
+    my @ret = map { $fn->(@rest) } 1 .. $trials;
+    my ($mean, $min, $max) = mean(\@ret);
+    my $sd = sd(\@ret, $mean);
+    push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean,
+      $sd, $min, $max;
+
+    # it isn't good to be negative
+    ok $min >= 0;
 }
