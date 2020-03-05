@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.13';
+our $VERSION = '0.14';
 
 use 5.24.0;
 use warnings;
@@ -342,9 +342,7 @@ our %Key_Commands = (
 
 sub apply_damage {
     my ($ani, $cause, @rest) = @_;
-    #warn "HP A for $ani->[SPECIES] $ani->[STASH][HITPOINTS]\n";
     $ani->[STASH][HITPOINTS] -= $Damage_From{$cause}->(@rest);
-    #warn "HP B for $ani->[SPECIES] $ani->[STASH][HITPOINTS]\n";
     if ($ani->[STASH][HITPOINTS] <= 0) {
         if ($ani->[SPECIES] == HERO) {
             $ani->[DISPLAY] = '&';                 # the @ got unravelled
@@ -519,15 +517,11 @@ sub game_loop {
     # cost is subtracted off each Animate and then those at 0 ...
   GLOOP: while (1) {
         my $min_cost = min(map { $_->[ENERGY] } @Animates);
-        warn('DBG min energy ' . $min_cost . "\n");
 
         my @movers;
         for my $ani (@Animates) {
             $ani->[ENERGY] -= $min_cost;
-            if ($ani->[ENERGY] <= CAN_MOVE) {
-                warn "moves $ani->[DISPLAY]\n";
-                push @movers, $ani;
-            }
+            push @movers, $ani if $ani->[ENERGY] <= CAN_MOVE;
         }
         # simultaneous move shuffle; this may be important in edge cases
         # such as when a player is trying to jump down a hole before
@@ -537,16 +531,13 @@ sub game_loop {
 
         my $new_level = 0;
         for my $ani (@movers) {
-            #use Data::Dumper; warn Dumper $ani; # DBG
             my ($status, $cost) = $ani->[UPDATE]->($ani);
-            warn('DBG move cost ' . $cost . ' for ' . $ani->[DISPLAY] . "\n");
             die "DBG bad cost $cost\n" . Dumper($ani) if $cost <= CAN_MOVE;
             $ani->[ENERGY] += $ani->[STASH][ECOST] = $cost;
             $new_level = $status
               if $status == MOVE_LVLDOWN or $status == MOVE_LVLUP;
             if ($ani->[SPECIES] == HERO) {
-                #warn "HERO RET COST $cost\n";
-                # XXXX probably don't need these
+                # XXXX probably don't need these if improve these updates
                 show_top_message();
                 show_status_bar();
             }
@@ -776,21 +767,12 @@ BOSS_SCREEN
 # expensive gem (vegetable) that speciated
 sub make_amulet {
     my ($col, $row) = @_;
-    state $made = 0;
-    # DBG will need to make it multiple times if they jump through a
-    # hole and miss where we put it, but not if they have one in
-    # stock?
-    if ($made) {
-        warn "already made an amulet\n";
-        return;
-    }
     my $gem;
     $gem->@[ GENUS, SPECIES, DISPLAY ] = $Things{ AMULET, }->@*;
     $gem->[STASH]->@[ GEM_NAME, GEM_REGEN ] = (AMULET_NAME, 1);
     $GGV += $gem->[STASH][GEM_VALUE] = AMULET_VALUE;
     # TODO make_* shouldn't need to know about LMAP
     $LMap[$row][$col][VEGGIE] = $gem;
-    $made = 1;
     return $gem;
 }
 
@@ -1065,8 +1047,6 @@ sub move_player_maker {
     my ($cols, $rows, $mvcost) = @_;
     sub {
         my @ret = move_animate($Animates[HERO], $cols, $rows, $mvcost);
-        #warn "DBG COST @ret\n";
-        # TODO another thing that should happen in pre-move phase?
         print display_cellobjs();
         return @ret;
     }
@@ -1256,7 +1236,6 @@ sub score {
 
 # COSMETIC inline display_ calls here for speeds?
 sub show_status_bar {
-    #warn "ECOST IN HERO IS $Animates[HERO][STASH][ECOST]\n";
     print at_row(STATUS_ROW),
       sprintf('Level %02d E%02d', $Level, $Animates[HERO][STASH][ECOST]),
       display_hitpoints(), display_cellobjs(), display_shieldup();
@@ -1264,9 +1243,7 @@ sub show_status_bar {
 
 sub passive_burn {
     my ($ani, $obj, $duration, $newcell) = @_;
-    #warn "DBG ACID duration $duration\n";
     log_code('007E') if $ani->[SPECIES] == HERO;
-    # TUNING about 20 turns to die from sitting in acid? is that too high?
     apply_damage($ani, 'acidburn', $duration) unless $newcell;
 }
 
@@ -1274,7 +1251,6 @@ sub passive_msg_maker {
     my ($message, $oneshot) = @_;
     sub {
         my ($ani, $obj, $duration, $newcell) = @_;
-        #warn sprintf "APAMM %s %d,%d\n", $ani->[DISPLAY], $ani->[LMC][WHERE]->@*;
         if ($newcell) {
             log_message($message);
             undef $obj->[UPDATE] if $oneshot;
@@ -1308,8 +1284,6 @@ sub loot_value {
             $value += 1000;
         } elsif ($item->[SPECIES] == GEM) {
             $value += $item->[STASH][GEM_VALUE];
-        } else {
-            warn "DBG item with no score value $item->[SPECIES] ??\n";
         }
     }
     # they probably won't need to charge their shield after the game
@@ -1338,11 +1312,10 @@ sub update_ghast {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my $weap = $self->[STASH][WEAPON];
 
     # is this even happening?
-    my $weap = $self->[STASH][WEAPON];
     my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    warn "DISTANCE $self->[DISPLAY] at $dist\n";
     return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
 
     my $missed = 0;
@@ -1389,7 +1362,6 @@ sub update_ghast {
         $trow
     );
 
-    warn "LOCK $self->[DISPLAY] (m = $missed) " . DumperA P => \@path;
     return MOVE_OKAY, DEFAULT_COST unless @path;
 
     for my $point (@path) {
@@ -1485,7 +1457,6 @@ sub update_player {
     # TODO also update hp, cellobjs, any msgs foo?
     raycast_fov(1);
 
-    warn "ready go\n";
     tcflush(STDIN_FILENO, TCIFLUSH);
     while (1) {
         # TODO inner count here so msg logging can know if "moves" have happened depsite same TurnCount
@@ -1495,7 +1466,6 @@ sub update_player {
             last if exists $Key_Commands{$key};
             log_message(sprintf "DBG unknown key \\%03o", ord $key);
         }
-        #warn "DBG key $key " . sprintf "%03o\n", ord $key;
         ($ret, $cost, my $code) = $Key_Commands{$key}->($self);
         confess "DBG no cost set?? $key" unless defined $cost;
         log_code($code) if defined $code;
@@ -1516,7 +1486,6 @@ sub update_player {
         );
 
         my $heal = between(0, $need, $offer);
-        warn "HEALUP $need $offer $heal\n";
         $self->[STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
         $self->[STASH][HITPOINTS]                  += $heal;
         $GGV                                       -= $heal;
@@ -1533,7 +1502,6 @@ sub update_player {
 
     $Energy_Spent += $cost;
     $Turn_Count++;
-    warn "over player\n";
     return $ret, $cost;
 }
 
@@ -1542,11 +1510,10 @@ sub update_troll {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my $weap = $self->[STASH][WEAPON];
 
     # is this even happening?
-    my $weap = $self->[STASH][WEAPON];
     my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    warn "DISTANCE $self->[DISPLAY] at $dist\n";
     return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
 
     my $missed = 0;
@@ -1610,9 +1577,6 @@ sub update_troll {
         $tcol,
         $trow
     );
-
-    warn "LOCK $self->[DISPLAY] ($take_shot, $missed) "
-      . DumperA P => \@path;
     return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
 
     for my $point (@path) {
@@ -1655,11 +1619,10 @@ sub update_stalker {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my $weap = $self->[STASH][WEAPON];
 
     # is this even happening?
-    my $weap = $self->[STASH][WEAPON];
     my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    warn "DISTANCE $self->[DISPLAY] at $dist\n";
     return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
 
     my $distf = $dist / $weap->[W_RANGE];
@@ -1691,8 +1654,6 @@ sub update_stalker {
         $tcol,
         $trow
     );
-
-    warn "LOCK $self->[DISPLAY] ($take_shot) " . DumperA P => \@path;
     return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
 
     for my $point (@path) {
@@ -1714,14 +1675,9 @@ sub use_item {
         return;
     }
     if (defined $stash->[SHIELDUP]) {
-        warn "DBG DOIN SWAP\n";
         ($stash->[SHIELDUP], $loot->[$i]) = ($loot->[$i], $stash->[SHIELDUP]);
     } else {
-        warn "DBG INSERT ($i)\n";
-        warn Dumper $loot->[$i], $stash->[SHIELDUP];
         $stash->[SHIELDUP] = splice $loot->@*, $i, 1;
-        warn Dumper $loot->[$i], $stash->[SHIELDUP];
-        warn "DONE INSERT ($i)\n";
     }
     print display_shieldup();
 }
