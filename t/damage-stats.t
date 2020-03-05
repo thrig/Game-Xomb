@@ -49,6 +49,18 @@ SKIP: {
         ok $min >= 0;
     }
     diag "sample damage - mean sd [min,max]:\n", @outcomes;
+
+    # and what do the to-hit values look like? (environmental factors
+    # make things even worse)
+    for my $name (sort { $a cmp $b } keys %Game::Xomb::Xarci_Bedo) {
+        my $s = 'TO-HIT ' . $Game::Xomb::Things{ $name }->[Game::Xomb::DISPLAY];
+        my $range = $Game::Xomb::Xarci_Bedo{$name}[1];
+        for my $dist (1..$range) {
+            my $odds = tohit($range, $dist, $Game::Xomb::Xarci_Bedo{$name}[0]);
+            $s .= ' ' . $odds;
+        }
+        diag $s;
+    }
 }
 
 sub mean {
@@ -68,4 +80,13 @@ sub mean {
 sub sd {
     my ($ref, $mean) = @_;
     return sqrt mean([ map { ($_ - $mean)**2 } $ref->@* ]);
+}
+
+# KLUGE extracted from update_* for monsters. these probably should be
+# non-linear so can have lower odds to-hit closer in for some, different
+# rates of change, etc
+sub tohit {
+    my ($range, $dist, $bonus) = @_;
+    my $distf = $dist / $range;
+    return $bonus + int((1 - $distf) * 100);
 }

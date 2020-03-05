@@ -177,7 +177,7 @@ our %Damage_From = (
     # distance and environment effects will reduce this damage rate
     # over time
     GHAST,
-    sub { roll(3, 2) - 1 },
+    sub { roll(3, 2) },
     MIMIC,
     sub { roll(2, 6) - 1 },
     STALKER,
@@ -192,8 +192,8 @@ our %Damage_From = (
 #
 #   WEAP_HIT, W_RANGE, W_COST
 our %Xarci_Bedo = (
-    GHAST,   [ 25, 6,  5 ],  MIMIC, [ 35, 7, 10 ],
-    STALKER, [ 40, 12, 20 ], TROLL, [ 0,  8, 30 ],
+    GHAST,   [ 7,  6,  5 ],  MIMIC, [ 20, 8, 11 ],
+    STALKER, [ 30, 12, 23 ], TROLL, [ 5,  7, 31 ],
 );
 # TODO probably also want monster HP being set somewhere near here
 
@@ -1353,8 +1353,8 @@ sub update_ghast {
     # can spoil the shot
     my $distf = $dist / $weap->[W_RANGE];
     if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
-        # missed... either hold fire or hold down the fire
-        return MOVE_OKAY, DEFAULT_COST if 0 == int rand 3;
+        # missed... but tend towards being trigger happy
+        return MOVE_OKAY, DEFAULT_COST if 0 == int rand 8;
         my @nearby;
         with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
         ($tcol, $trow) = $nearby[ rand @nearby ]->@*;
@@ -1556,9 +1556,11 @@ sub update_troll {
     # NOTE this may need to be set higher as environmental factors below
     # can spoil the shot
     my $distf = $dist / $weap->[W_RANGE];
+
     if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
+        return MOVE_OKAY, DEFAULT_COST if 0 == int rand 2;
+        # ... but sometimes bullet goes somewhere
         $missed = 1;
-        # ... but the bullet (maybe) does go somewhere
     }
 
     my $take_shot = 1;
