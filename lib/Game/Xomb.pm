@@ -116,13 +116,13 @@ sub GEM_NAME ()  { 0 }
 sub GEM_VALUE () { 1 }
 sub GEM_REGEN () { 2 }
 
-sub START_HP () { 100 }           # player start (and max) HP
-sub LOOT_MAX () { NEED_ROWS - 2 } # avoids scrolling, status bar wipeout
+sub START_HP () { 100 }              # player start (and max) HP
+sub LOOT_MAX () { NEED_ROWS - 2 }    # avoids scrolling, status bar wipeout
 
 sub WEAP_DMG () { 0 }    # for WEAPON stash slot (mostly for monsters)
-sub WEAP_HIT () { 1 }
-sub W_RANGE ()  { 2 }    # max shooting range
-sub W_COST ()   { 3 }    # recharge time after shot
+sub W_RANGE ()  { 1 }    # max shooting range
+sub W_COST ()   { 2 }    # recharge time after shot
+sub W_TOHIT ()  { 3 }    # to-hit values ...
 
 sub MOVE_LVLUP ()   { -1 }    # NOTE tied to level change math
 sub MOVE_FAILED ()  { 0 }     # for zero-cost player moves
@@ -190,10 +190,14 @@ our %Damage_From = (
 # roll), RANGE how far the monster will shoot, COST is how long the
 # weapon takes to recharge after a successful shot
 #
-#   WEAP_HIT, W_RANGE, W_COST
-our %Xarci_Bedo = (
-    GHAST,   [ 7,  6,  5 ],  MIMIC, [ 20, 8, 11 ],
-    STALKER, [ 30, 12, 23 ], TROLL, [ 5,  7, 31 ],
+#   W_RANGE  W_COST
+our %Xarci_Bedo =
+  (GHAST, [ 6, 5 ], MIMIC, [ 8, 11 ], STALKER, [ 12, 23 ], TROLL, [ 7, 31 ],);
+our %To_Hit = (
+    GHAST, [ 85, 73, 57, 40, 23, 11 ],
+    MIMIC, [ 0, 32, 45, 57, 70, 82, 65, 53, 41 ],
+    STALKER, [ 96, 96, 88, 88, 80, 80, 71, 63, 55, 46, 38, 30 ],
+    TROLL,   [ 90, 76, 62, 47, 33, 19, 11 ],
 );
 # TODO probably also want monster HP being set somewhere near here
 
@@ -309,32 +313,31 @@ our %Key_Commands = (
     'b' => move_player_maker(-1, +1, DIAG_COST),
     'n' => move_player_maker(+1, +1, DIAG_COST),
     # misc
-    ' ' => \&move_nop,
-    ',' => \&move_pickup,
-    '.' => \&move_nop,
-    '<' => \&move_gate_up,
-    '>' => \&move_gate_down,
-    '?' => sub { help_screen(); return MOVE_FAILED, 0 },
-    'E' => \&move_equip,
-    'G' => sub { hide_screen(); return MOVE_FAILED, 0 },
-    'M' => sub { show_messages(); return MOVE_FAILED, 0 },
-    'Q' => \&move_quit,
-    'R' => \&move_remove,
-    'd' => \&move_drop,
-    'g' => \&move_pickup,
-    'i' => \&manage_inventory,
-    'p' => sub { clear_code(); return MOVE_FAILED, 0 },
-    'q' => sub { game_over('Be seeing you...') },            # DBG
-    'v' => sub { log_message('xomb ' . $VERSION); return MOVE_FAILED, 0 },
-    'x' => \&move_examine,
-    "\003" => sub { return MOVE_FAILED, 0, '1203' },         # <C-c>
-    "\014" => sub { refresh_board(); MOVE_FAILED, 0 },       # <C-l>
-    "\032" => sub { return MOVE_FAILED, 0, '1220' },         # <C-z>
+    ' '    => \&move_nop,
+    ','    => \&move_pickup,
+    '.'    => \&move_nop,
+    '<'    => \&move_gate_up,
+    '>'    => \&move_gate_down,
+    '?'    => sub { help_screen(); return MOVE_FAILED, 0 },
+    'E'    => \&move_equip,
+    'G'    => sub { hide_screen(); return MOVE_FAILED, 0 },
+    'M'    => sub { show_messages(); return MOVE_FAILED, 0 },
+    'Q'    => \&move_quit,
+    'R'    => \&move_remove,
+    'd'    => \&move_drop,
+    'g'    => \&move_pickup,
+    'i'    => \&manage_inventory,
+    'p'    => sub { clear_code(); return MOVE_FAILED, 0 },
+    'q'    => sub { game_over('Be seeing you...') },                         # DBG
+    'v'    => sub { log_message('xomb ' . $VERSION); return MOVE_FAILED, 0 },
+    'x'    => \&move_examine,
+    "\003" => sub { return MOVE_FAILED, 0, '1203' },                         # <C-c>
+    "\014" => sub { refresh_board(); MOVE_FAILED, 0 },                       # <C-l>
+    "\032" => sub { return MOVE_FAILED, 0, '1220' },                         # <C-z>
     "\033" => sub { return MOVE_FAILED, 0, '121B' },
 );
 # and a weak effort at numpad support
-@Key_Commands{qw/1 2 3 4 5 6 7 8 9/} =
-  @Key_Commands{qw/b j n h . l y k u/};
+@Key_Commands{qw/1 2 3 4 5 6 7 8 9/} = @Key_Commands{qw/b j n h . l y k u/};
 
 ########################################################################
 #
@@ -386,7 +389,7 @@ sub bail_out {
     restore_term();
     print "\n", at_col(0), CLEAR_LINE;
     warn $_[0] if @_;
-    game_over('The game yet again collapses about you.');   # DBG change rel
+    game_over('The game yet again collapses about you.');    # DBG change rel
 }
 
 sub between {
@@ -421,8 +424,7 @@ sub between {
         while (my ($i, $message) = each @log) {
             $s .= at_row(MSG_ROW + $i) . CLEAR_RIGHT . $message;
         }
-        print $s, at_row(MSG_ROW + @log), CLEAR_RIGHT,
-          "-- press Esc to continue --";
+        print $s, at_row(MSG_ROW + @log), CLEAR_RIGHT, "-- press Esc to continue --";
         await_quit();
         print HIDE_CURSOR;
         refresh_board(scalar @log);
@@ -480,6 +482,28 @@ sub display_shieldup {
     AT_SHIELDUP . '[' . $ch . ']';
 }
 
+# does a monster hit? -1 for out of range, 0 for miss, 1 for hit
+sub does_hit {
+    my ($dist, $weap) = @_;
+    if ($dist > $weap->[W_RANGE]) {
+        my $away = $dist - $weap->[W_RANGE];
+        warn "AWAY by $away\n";
+        # wait until player can wander nearby before next update
+        warn "SNOOZE BY " . DEFAULT_COST * $away . "\n";
+        return -1, DEFAULT_COST * $away;
+    }
+    #   use Data::Dumper; warn Dumper $weap;
+    warn "DIST $dist OFF "
+      . (W_TOHIT + $dist - 1)
+      . " TO-HIT "
+      . $weap->[ W_TOHIT + $dist - 1 ] . "\n";
+    if ($weap->[ W_TOHIT + $dist - 1 ] > int rand 100) {
+        warn "MISS\n";
+        return 0, $weap->[W_COST];
+    }
+    return 1, $weap->[W_COST];
+}
+
 sub fisher_yates_shuffle {
     my ($array) = @_;
     my $i;
@@ -495,7 +519,7 @@ sub game_loop {
       if bad_terminal();
 
     ReadMode 'raw';
-    $SIG{$_} = \&bail_out for qw(INT HUP TERM PIPE QUIT USR1 USR2 __DIE__);
+    $SIG{$_}    = \&bail_out for qw(INT HUP TERM PIPE QUIT USR1 USR2 __DIE__);
     $SIG{CONT}  = \&refresh_board;
     $SIG{WINCH} = sub {
         log_message('The terminal is too small!') if bad_terminal();
@@ -601,7 +625,7 @@ sub generate_level {
     if ($Level == 1) {
         $c                     = $r = 3;
         $LMap[$r][$c][MINERAL] = $Things{ WALL, };
-        $c                     = $r = 4;
+        $c                     = $r = 21;
         $LMap[$r][$c][MINERAL] = $Things{ HOLE, };
     } elsif ($Level == 2) {
         make_amulet(5, 5);
@@ -622,12 +646,12 @@ sub generate_level {
         }
     }
 
-    make_monster(
-        0, 3,
-        species => TROLL,
-        hp      => 48,
-        energy  => 10,
-    );
+    #make_monster(
+    #    0, 3,
+    #    species => TROLL,
+    #    hp      => 48,
+    #    energy  => 10,
+    #);
 
     make_monster(
         50, 0,
@@ -817,10 +841,9 @@ sub make_monster {
     $monst->@[ GENUS, SPECIES, DISPLAY, UPDATE, ENERGY, LMC ] =
       ($Things{ $params{species} }->@*, $params{energy}, $LMap[$row][$col]);
     $monst->[STASH]->@[ HITPOINTS, ECOST ] = ($params{hp}, CAN_MOVE);
-    $monst->[STASH][WEAPON]->@[ WEAP_DMG, WEAP_HIT, W_RANGE, W_COST ] = (
-        $Damage_From{ $params{species} },
-        $Xarci_Bedo{ $params{species} }->@*
-    );
+    $monst->[STASH][WEAPON]->@[ WEAP_DMG, W_RANGE, W_COST ] =
+      ($Damage_From{ $params{species} }, $Xarci_Bedo{ $params{species} }->@*,);
+    push $monst->[STASH][WEAPON]->@*, $To_Hit{ $params{species} }->@*;
 
     # TODO shouldn't need to know about this, either
     push @Animates, $monst;
@@ -978,8 +1001,7 @@ sub move_examine {
             $s .= $g->[DISPLAY] . ' ' . $Descript{ $g->[SPECIES] }
               if defined $g;
         }
-        print at_row(STATUS_ROW), CLEAR_RIGHT, $s,
-          at(map { MAP_DOFF + $_ } $col, $row);
+        print at_row(STATUS_ROW), CLEAR_RIGHT, $s, at(map { MAP_DOFF + $_ } $col, $row);
         my $key = ReadKey(0);
         last if $key eq "\033" or $key eq 'q';
         my $distance = 1;
@@ -1100,20 +1122,16 @@ sub raycast_fov {
 
     # radius 7 points taken from Game:RaycastFOV cache
     for my $ep (
-        [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],
-        [ 6,  3 ],  [ 6,  4 ],  [ 5,  4 ],  [ 5,  5 ],
-        [ 4,  5 ],  [ 4,  6 ],  [ 3,  6 ],  [ 2,  6 ],
-        [ 2,  7 ],  [ 1,  7 ],  [ 0,  7 ],  [ -1, 7 ],
-        [ -2, 7 ],  [ -2, 6 ],  [ -3, 6 ],  [ -4, 6 ],
-        [ -4, 5 ],  [ -5, 5 ],  [ -5, 4 ],  [ -6, 4 ],
-        [ -6, 3 ],  [ -6, 2 ],  [ -7, 2 ],  [ -7, 1 ],
-        [ -7, 0 ],  [ -7, -1 ], [ -7, -2 ], [ -6, -2 ],
-        [ -6, -3 ], [ -6, -4 ], [ -5, -4 ], [ -5, -5 ],
-        [ -4, -5 ], [ -4, -6 ], [ -3, -6 ], [ -2, -6 ],
-        [ -2, -7 ], [ -1, -7 ], [ 0,  -7 ], [ 1,  -7 ],
-        [ 2,  -7 ], [ 2,  -6 ], [ 3,  -6 ], [ 4,  -6 ],
-        [ 4,  -5 ], [ 5,  -5 ], [ 5,  -4 ], [ 6,  -4 ],
-        [ 6,  -3 ], [ 6,  -2 ], [ 7,  -2 ], [ 7,  -1 ]
+        [ 7,  0 ],  [ 7,  1 ],  [ 7,  2 ],  [ 6,  2 ],  [ 6,  3 ],  [ 6,  4 ],
+        [ 5,  4 ],  [ 5,  5 ],  [ 4,  5 ],  [ 4,  6 ],  [ 3,  6 ],  [ 2,  6 ],
+        [ 2,  7 ],  [ 1,  7 ],  [ 0,  7 ],  [ -1, 7 ],  [ -2, 7 ],  [ -2, 6 ],
+        [ -3, 6 ],  [ -4, 6 ],  [ -4, 5 ],  [ -5, 5 ],  [ -5, 4 ],  [ -6, 4 ],
+        [ -6, 3 ],  [ -6, 2 ],  [ -7, 2 ],  [ -7, 1 ],  [ -7, 0 ],  [ -7, -1 ],
+        [ -7, -2 ], [ -6, -2 ], [ -6, -3 ], [ -6, -4 ], [ -5, -4 ], [ -5, -5 ],
+        [ -4, -5 ], [ -4, -6 ], [ -3, -6 ], [ -2, -6 ], [ -2, -7 ], [ -1, -7 ],
+        [ 0,  -7 ], [ 1,  -7 ], [ 2,  -7 ], [ 2,  -6 ], [ 3,  -6 ], [ 4,  -6 ],
+        [ 4,  -5 ], [ 5,  -5 ], [ 5,  -4 ], [ 6,  -4 ], [ 6,  -3 ], [ 6,  -2 ],
+        [ 7,  -2 ], [ 7,  -1 ]
     ) {
         linecb(
             sub {
@@ -1169,9 +1187,7 @@ sub raycast_fov {
     # ensure @ is shown as FOV may not touch that cell
     $Visible_Cell{ $cx . ',' . $cy } = [ $cx, $cy ];
     print $FOV =
-        $s
-      . at(map { MAP_DOFF + $_ } $cx, $cy)
-      . $LMap[$cy][$cx][ANIMAL][DISPLAY];
+      $s . at(map { MAP_DOFF + $_ } $cx, $cy) . $LMap[$cy][$cx][ANIMAL][DISPLAY];
 }
 
 sub refresh_board {
@@ -1314,20 +1330,14 @@ sub update_ghast {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    # is this even happening?
-    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+    my ($hits, $cost) =
+      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    return MOVE_OKAY, $cost if $hits == -1;
 
+    # but gatling gun is often trigger happy ...
     my $missed = 0;
-
-    # do they actually hit? simple linear to-hit based on distance plus
-    # a modifier to move things around
-    # NOTE this may need to be set higher as environmental factors below
-    # can spoil the shot
-    my $distf = $dist / $weap->[W_RANGE];
-    if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
-        # missed... but tend towards being trigger happy
-        return MOVE_OKAY, DEFAULT_COST if 0 == int rand 8;
+    if ($hits == 0) {
+        return MOVE_OKAY, $cost if 0 == int rand 8;
         my @nearby;
         with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
         ($tcol, $trow) = $nearby[ rand @nearby ]->@*;
@@ -1392,18 +1402,15 @@ sub update_mortar {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
-
-    # is this even happening?
     my $weap = $self->[STASH][WEAPON];
-    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    return MOVE_OKAY, DEFAULT_COST
-      if $dist > $weap->[W_RANGE] or $dist < 1.5;
+
+    my ($hits, $cost) =
+      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    return MOVE_OKAY, $cost if $hits == -1;
 
     my @nearby;
-
-    my $distf = $dist / $weap->[W_RANGE];
-    if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
-        # oops, miss
+    if ($hits == 0) {
+        return MOVE_OKAY, $cost if 0 == int rand 6;
         with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
     }
 
@@ -1512,19 +1519,13 @@ sub update_troll {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    # is this even happening?
-    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+    my ($hits, $cost) =
+      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    return MOVE_OKAY, $cost if $hits == -1;
 
     my $missed = 0;
 
-    # do they actually hit? simple linear to-hit based on distance plus
-    # a modifier to move things around
-    # NOTE this may need to be set higher as environmental factors below
-    # can spoil the shot
-    my $distf = $dist / $weap->[W_RANGE];
-
-    if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
+    if ($hits == 0) {
         return MOVE_OKAY, DEFAULT_COST if 0 == int rand 2;
         # ... but sometimes bullet goes somewhere
         $missed = 1;
@@ -1553,6 +1554,8 @@ sub update_troll {
             my $cell = $LMap[$row][$col][MINERAL];
             if ($cell->[SPECIES] == WALL) {
                 if (0 == int rand 20) {
+                    ($tcol, $trow) = ($col, $row);
+                    $missed          = 1;
                     $property_damage = 1;
                 } else {
                     $take_shot = 0;
@@ -1590,9 +1593,8 @@ sub update_troll {
         my $cell = $lmc->[MINERAL];
         reduce($LMap[$trow][$tcol]);
         if (exists $Visible_Cell{$loc}) {
-            log_message('A '
-                  . $Descript{ $cell->[SPECIES] }
-                  . ' explodes in a shower of fragments!');
+            log_message(
+                'A ' . $Descript{ $cell->[SPECIES] } . ' explodes in a shower of fragments!');
         }
     } else {
         if ($missed) {
@@ -1621,13 +1623,9 @@ sub update_stalker {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    # is this even happening?
-    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
-
-    my $distf = $dist / $weap->[W_RANGE];
-    return MOVE_OKAY, DEFAULT_COST
-      if int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100);
+    my ($hits, $cost) =
+      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    return MOVE_OKAY, $cost if $hits < 1;
 
     my $take_shot = 1;
     my @path;
