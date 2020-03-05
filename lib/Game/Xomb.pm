@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '0.11';
+our $VERSION = '0.13';
 
 use 5.24.0;
 use warnings;
@@ -78,17 +78,19 @@ sub VEGGIE ()  { 2 }    # amulet, gems, etc
 sub ANIMAL ()  { 3 }    # Animates
 
 # SPECIES
-sub HERO ()   { 0 }     # NOTE also used for @Animates slot
-sub GHAST ()  { 1 }
-sub TROLL ()  { 2 }
-sub AMULET () { 3 }
-sub GEM ()    { 4 }
-sub HOLE ()   { 5 }
-sub FLOOR ()  { 6 }
-sub GATE ()   { 7 }     # stairs, rogue 3.6 style
-sub ACID ()   { 8 }
-sub RUBBLE () { 9 }
-sub WALL ()   { 10 }
+sub HERO ()    { 0 }    # NOTE also used for @Animates slot
+sub GHAST ()   { 1 }
+sub MIMIC ()   { 2 }
+sub STALKER () { 3 }
+sub TROLL ()   { 4 }
+sub AMULET ()  { 5 }
+sub GEM ()     { 6 }
+sub HOLE ()    { 7 }
+sub FLOOR ()   { 8 }
+sub GATE ()    { 9 }    # stairs, rogue 3.6 style
+sub ACID ()    { 10 }
+sub RUBBLE ()  { 11 }
+sub WALL ()    { 12 }
 
 sub AMULET_NAME () { 'Dragonstone' }
 
@@ -112,14 +114,13 @@ sub SHIELDUP ()  { 4 }     # player shield recharge gem
 sub GEM_NAME ()  { 0 }
 sub GEM_VALUE () { 1 }
 
-sub START_HP () { 100 }           # see Damage_From and related
+sub START_HP () { 100 }           # player start (and max) HP
 sub LOOT_MAX () { NEED_ROWS - 2 } # avoids scrolling, status bar wipeout
 
 sub WEAP_DMG () { 0 }    # for WEAPON stash slot (mostly for monsters)
 sub WEAP_HIT () { 1 }
 sub W_RANGE ()  { 2 }    # max shooting range
-sub W_CUTOFF () { 3 }    # how likely to take longshots
-sub W_COST ()   { 4 }    # recharge time after shot
+sub W_COST ()   { 3 }    # recharge time after shot
 
 sub MOVE_LVLUP ()   { -1 }    # NOTE tied to level change math
 sub MOVE_FAILED ()  { 0 }     # for zero-cost player moves
@@ -153,7 +154,7 @@ our %Damage_From = (
     acidburn => sub {
         my ($duration) = @_;
         my $burn = 0;
-        for (1 .. $duration) { $burn++ if 0 == int rand 3 }
+        $burn += int rand 2 for 1..$duration;
         return $burn;
     },
     attackby => sub {
@@ -175,47 +176,55 @@ our %Damage_From = (
     # distance and environment effects will reduce this damage rate
     # over time
     GHAST,
-    sub { roll(1, 6) },
+    sub { roll(1, 8) },
+    MIMIC,
+    sub { roll(2, 8) },
+    STALKER,
+    sub { roll(4, 4) },
     TROLL,
-    sub { roll(2, 6) + roll(1, 8) + roll(1, 8) },
+    sub { roll(3, 6) + roll(2, 8) - 2 },
 );
 
 # extra details on monster weapons; HIT is a to-hit bonus (on a 1d100
-# roll), RANGE how far the monster will shoot, CUTOFF how aggressive
-# monster is at shooting when the player is at range but has low health,
-# COST is how long the weapon takes to recharge after a successful shot
+# roll), RANGE how far the monster will shoot, COST is how long the
+# weapon takes to recharge after a successful shot
 #
-#   WEAP_HIT, W_RANGE, W_CUTOFF, W_COST
-our %Weapon_Stats =
-  (GHAST, [ 30, 6, 0.5, 10 ], TROLL, [ 10, 8, 0.75, 30 ],);
+#   WEAP_HIT, W_RANGE, W_COST
+our %Xarci_Bedo = (
+    GHAST,   [ 25, 6,  6 ],  MIMIC, [ 35, 7, 10 ],
+    STALKER, [ 40, 12, 18 ], TROLL, [ 0,  8, 32 ],
+);
 
 # these are "class objects"; in other words there is only one WALL in
 # all WALL cells (see reify, reduce, and the make_* routines)
 #
-#             GENUS    SPECIES DISPLAY UPDATE (passive effects)
+#              GENUS    SPECIES DISPLAY UPDATE (passive effects)
 our %Things = (
-    ACID,   [ MINERAL, ACID,   '~', \&passive_burn ],
-    AMULET, [ VEGGIE,  AMULET, ',' ],
-    FLOOR,  [ MINERAL, FLOOR,  '.' ],
-    GATE,   [ MINERAL, GATE,   '%' ],
-    GEM,    [ VEGGIE,  GEM,    '*' ],
-    GHAST,  [ ANIMAL,  GHAST,  'G' ],
-    HERO,   [ ANIMAL,  HERO,   '@' ],
-    HOLE,   [ MINERAL, HOLE,   'o' ],
-    RUBBLE, [ MINERAL, RUBBLE, '^' ],
-    TROLL,  [ ANIMAL,  TROLL,  'T' ],
-    WALL,   [ MINERAL, WALL,   '#' ],
+    ACID,    [ MINERAL, ACID,    '~', \&passive_burn ],
+    AMULET,  [ VEGGIE,  AMULET,  ',' ],
+    FLOOR,   [ MINERAL, FLOOR,   '.' ],
+    GATE,    [ MINERAL, GATE,    '%' ],
+    GEM,     [ VEGGIE,  GEM,     '*' ],
+    GHAST,   [ ANIMAL,  GHAST,   'G', \&update_shooter ],
+    HERO,    [ ANIMAL,  HERO,    '@' ],
+    HOLE,    [ MINERAL, HOLE,    'o' ],
+    MIMIC,   [ ANIMAL,  MIMIC,   'M', \&update_mortar ],
+    RUBBLE,  [ MINERAL, RUBBLE,  '^' ],
+    STALKER, [ ANIMAL,  STALKER, 'Q', \&update_stalker ],
+    TROLL,   [ ANIMAL,  TROLL,   'T', \&update_shooter ],
+    WALL,    [ MINERAL, WALL,    '#' ],
 );
 
 # NOTE these need to be fairly short as they must all fit in status line
 # and there could be three of them; see move_examine
 our %Descript = (
-    ACID,   'shallow acid pool', AMULET, AMULET_NAME,
-    FLOOR,  'floor',             GATE,   'Gate to next level',
-    GEM,    'gemstone',          GHAST,  'Gatling Autocannon',
-    HERO,   'You',               HOLE,   'Hole',
-    RUBBLE, 'bunch of rubble',   TROLL,  'Railgun Tower',
-    WALL,   'wall',
+    ACID,    'shallow acid pool', AMULET, AMULET_NAME,
+    FLOOR,   'floor',             GATE,   'Gate to next level',
+    GEM,     'gemstone',          GHAST,  'Gatling Autocannon',
+    HERO,    'You',               HOLE,   'Hole',
+    MIMIC,   'Mortar',            RUBBLE, 'bunch of rubble',
+    STALKER, 'Quad-laser Array',  TROLL,  'Railgun Tower',
+    WALL,    'wall',
 );
 
 # what happens when moving into the given GENUS (allow the move,
@@ -255,7 +264,6 @@ our %Bump_Into = (
             if ($mover->[SPECIES] == HERO) {
                 # TODO this log needs for example expedited display...
                 log_message('You plunge into the hole.');
-                #animate_plunge($mover, $dpoint);
                 relocate($mover, $dpoint);
                 log_code('0099');
                 $ret = MOVE_LVLDOWN;
@@ -329,20 +337,6 @@ our %Key_Commands = (
 ########################################################################
 #
 # SUBROUTINES
-
-sub animate_plunge {
-    my ($mover, $dpoint) = @_;
-    my $lmc  = $mover->[LMC];
-    my $cell = $lmc->[VEGGIE] // $lmc->[MINERAL];
-    print at(map { MAP_DOFF + $_ } $lmc->[WHERE]->@*), $cell->[DISPLAY],
-      at(map { MAP_DOFF + $_ } $dpoint->@*), $mover->[DISPLAY];
-    # FOV is going to be redone for the level change, anyways
-    delete $Visible_Cell{ join ',', $dpoint->@* };
-    for my $point (values %Visible_Cell) {
-        print at(map { MAP_DOFF + $_ } $point->@*), ' ';
-    }
-    $Violent_Sleep_Of_Reason = 1;
-}
 
 sub apply_damage {
     my ($ani, $cause, @rest) = @_;
@@ -541,14 +535,6 @@ sub game_loop {
 
         my $new_level = 0;
         for my $ani (@movers) {
-            if ($ani->[SPECIES] == HERO) {    # player pre-move
-                if ($Violent_Sleep_Of_Reason == 1) {
-                    sleep(0.1);              # TODO flag for this (again)
-                    $Violent_Sleep_Of_Reason = 0;
-                }
-                # TODO also update hp, cellobjs, any msgs foo?
-                raycast_fov(1);
-            }
             #use Data::Dumper; warn Dumper $ani; # DBG
             my ($status, $cost) = $ani->[UPDATE]->($ani);
             warn('DBG move cost ' . $cost . ' for ' . $ani->[DISPLAY] . "\n");
@@ -646,14 +632,28 @@ sub generate_level {
     make_monster(
         0, 3,
         species => TROLL,
-        hp      => 50,
+        hp      => 48,
         energy  => 10,
     );
 
     make_monster(
         7, 8,
         species => GHAST,
-        hp      => 12,
+        hp      => 16,
+        energy  => 10,
+    );
+
+    make_monster(
+        17, 17,
+        species => MIMIC,
+        hp      => 24,
+        energy  => 10,
+    );
+
+    make_monster(
+        40, 20,
+        species => STALKER,
+        hp      => 32,
         energy  => 10,
     );
 
@@ -681,7 +681,7 @@ sub has_amulet {
 sub has_lost {
     restore_term();
     my $score = score();
-    print CLEAR_SCREEN, "Alas, victory was not in the cards this time.\n\n$score\n";
+    print CLEAR_SCREEN, "Alas, victory was not to be yours.\n\n$score\n";
     exit(1);
 }
 
@@ -818,16 +818,13 @@ sub make_monster {
     my ($col, $row, %params) = @_;
     die "DBG already occupied??" if defined $LMap[$row][$col][ANIMAL];
     my $monst;
-    $monst->@[ GENUS, SPECIES, DISPLAY, ENERGY, UPDATE, LMC ] = (
-        $Things{ $params{species} }->@*,
-        $params{energy}, \&update_monster, $LMap[$row][$col]
-    );
+    $monst->@[ GENUS, SPECIES, DISPLAY, UPDATE, ENERGY, LMC ] =
+      ($Things{ $params{species} }->@*, $params{energy}, $LMap[$row][$col]);
     $monst->[STASH]->@[ HITPOINTS, ECOST ] = ($params{hp}, CAN_MOVE);
-    $monst->[STASH][WEAPON]
-      ->@[ WEAP_DMG, WEAP_HIT, W_RANGE, W_CUTOFF, W_COST ] = (
+    $monst->[STASH][WEAPON]->@[ WEAP_DMG, WEAP_HIT, W_RANGE, W_COST ] = (
         $Damage_From{ $params{species} },
-        $Weapon_Stats{ $params{species} }->@*
-      );
+        $Xarci_Bedo{ $params{species} }->@*
+    );
 
     # TODO shouldn't need to know about this, either
     push @Animates, $monst;
@@ -1129,7 +1126,7 @@ sub raycast_fov {
                 my ($col, $row, $iters) = @_;
 
                 # "the moon is a harsh mistress" -- FOV degrades at range
-                return -1 if $iters - 4 > int rand 7;
+                return -1 if $iters - 3 > int rand 7;
 
                 my $loc = $col . ',' . $row;
                 return -1 if $blocked{$loc};
@@ -1325,8 +1322,7 @@ sub update_gameover {
     return MOVE_OKAY, DEFAULT_COST;
 }
 
-# when player is in range try to kill them (plus some complications)
-sub update_monster {
+sub update_mortar {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
@@ -1334,58 +1330,28 @@ sub update_monster {
     # is this even happening?
     my $weap = $self->[STASH][WEAPON];
     my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
-    warn "DISTANCE $self->[DISPLAY] at $dist\n";
-    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+    return MOVE_OKAY, DEFAULT_COST
+      if $dist > $weap->[W_RANGE] or $dist < 1.5;
 
-    # how attractive is the shot? not so much when the hero is far away
-    # *and* has lots of health. also long-range shots may show beyond
-    # FOV where a monster is
-    my $hpf   = $Animates[HERO][STASH][HITPOINTS] / START_HP;
+    my @nearby;
+
     my $distf = $dist / $weap->[W_RANGE];
-    my $favor = $hpf * $distf;
-    return MOVE_OKAY, DEFAULT_COST if $favor > $weap->[W_CUTOFF];
-
-    # do they actually hit? simple linear to-hit based on distance plus
-    # a modifier to move things around
-    # NOTE this may need to be set higher as environmental factors below
-    # can spoil the shot
     if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
-        warn "MISSED $self->[DISPLAY] df $distf\n";
-        return MOVE_OKAY, DEFAULT_COST;
+        # oops, miss
+        with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
     }
 
-    my $take_shot = 1;
-    my @path;
-    my $property_damage = 0;
+    # Mortars could, in theory, lob shells over walls but that would
+    # allow Mortars to abuse things like ### that the player could
+    # not get into.                      #M#
+    my $take_shot = 1;    #              ### therefore LOS is required
     linecb(
         sub {
             my ($col, $row) = @_;
-            # no friendly fire
-            if (defined $LMap[$row][$col][ANIMAL]
-                and $LMap[$row][$col][ANIMAL][SPECIES] != HERO) {
-                $take_shot = 0;
-                return -1;
-            }
-            push @path, [ $col, $row ];
             my $cell = $LMap[$row][$col][MINERAL];
             if ($cell->[SPECIES] == WALL) {
-                if (0 == int rand 20) {
-                    $property_damage = 1;
-                } else {
-                    $take_shot = 0;
-                }
+                $take_shot = 0;
                 return -1;
-            } elsif ($cell->[SPECIES] == RUBBLE) {
-                # similar FOV problem as for player, see raycast. also
-                # should mean that rubble is good cover for the hero
-                if (0 == int rand 2) {
-                    if (0 == int rand 200) {
-                        $property_damage = 1;
-                    } else {
-                        $take_shot = 0;
-                    }
-                    return -1;
-                }
             }
             return 0;
         },
@@ -1394,42 +1360,37 @@ sub update_monster {
         $tcol,
         $trow
     );
+    return MOVE_OKAY, DEFAULT_COST unless $take_shot;
 
-    warn "LOCK $self->[DISPLAY] ($take_shot) " . DumperA P => \@path;
-    return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
-
-    for my $point (@path) {
-        my $loc = join ',', $point->@*;
-        print at(map { MAP_DOFF + $_ } $point->@*), '-'
-          if exists $Visible_Cell{$loc};
-    }
-    my ($col, $row) = $path[-1]->@*;
-    my $loc = $col . ',' . $row;
-    my $lmc = $LMap[$row][$col];
-    if ($property_damage) {
-        my $cell = $lmc->[MINERAL];
-        reduce($LMap[$row][$col]);
-        if (exists $Visible_Cell{$loc}) {
-            log_message('A '
-                  . $Descript{ $cell->[SPECIES] }
-                  . ' explodes in a shower of fragments!');
+    if (@nearby) {
+        log_message('A mortar shell explodes nearby!');
+        my ($ncol, $nrow) = $nearby[ rand @nearby ]->@*;
+        my $buddy = $LMap[$nrow][$ncol][ANIMAL];
+        if (defined $buddy) {
+            apply_damage($buddy, 'attackby', $self);
+        } else {
+            reduce($LMap[$nrow][$ncol]) if 0 == int rand 20;
         }
     } else {
+        log_message('A mortar shell explodes about you!');
         apply_damage($Animates[HERO], 'attackby', $self);
     }
-    if (exists $Visible_Cell{$loc}) {
-        my $cell = $lmc->[ANIMAL] // $lmc->[VEGGIE] // $lmc->[MINERAL];
-        print at(map { MAP_DOFF + $_ } $col, $row), $cell->[DISPLAY];
-    }
 
-    $Violent_Sleep_Of_Reason = 1;
-
-    return MOVE_OKAY, $weap->[W_COST] // DEFAULT_COST;
+    return MOVE_OKAY, $weap->[W_COST];
 }
 
 sub update_player {
     my ($self) = @_;
     my ($cost, $ret);
+
+    # pre-move tasks
+    if ($Violent_Sleep_Of_Reason == 1) {
+        sleep(0.15);    # TODO flag for this (again)
+        $Violent_Sleep_Of_Reason = 0;
+    }
+    # TODO also update hp, cellobjs, any msgs foo?
+    raycast_fov(1);
+
     warn "ready go\n";
     tcflush(STDIN_FILENO, TCIFLUSH);
     while (1) {
@@ -1450,6 +1411,7 @@ sub update_player {
         # of board?)
         last if $ret != MOVE_FAILED;
     }
+
     if (defined $self->[STASH][SHIELDUP]
         and $self->[STASH][HITPOINTS] < START_HP) {
         my $need  = START_HP - $self->[STASH][HITPOINTS];
@@ -1473,10 +1435,178 @@ sub update_player {
             print display_shieldup();
         }
     }
+
     $Energy_Spent += $cost;
     $Turn_Count++;
     warn "over player\n";
     return $ret, $cost;
+}
+
+# when player is in range try to shoot them
+sub update_shooter {
+    my ($self) = @_;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+
+    # is this even happening?
+    my $weap = $self->[STASH][WEAPON];
+    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
+    warn "DISTANCE $self->[DISPLAY] at $dist\n";
+    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+
+    my $missed = 0;
+
+    # do they actually hit? simple linear to-hit based on distance plus
+    # a modifier to move things around
+    # NOTE this may need to be set higher as environmental factors below
+    # can spoil the shot
+    my $distf = $dist / $weap->[W_RANGE];
+    if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
+        $missed = 1;
+        # ... but the bullet (maybe) does go somewhere
+    }
+
+    my $take_shot = 1;
+    my @path;
+    my $property_damage = 0;
+    walkcb(
+        sub {
+            my ($col, $row, $iters) = @_;
+            push @path, [ $col, $row ];
+            if ($iters >= $weap->[W_RANGE]) {
+                ($tcol, $trow) = ($col, $row) if $missed;
+                return -1
+            }
+            if (defined $LMap[$row][$col][ANIMAL]
+                and $LMap[$row][$col][ANIMAL][SPECIES] != HERO) {
+                if ($missed) {
+                    ($tcol, $trow) = ($col, $row);
+                } else {
+                    $take_shot = 0;
+                }
+                return -1;
+            }
+            my $cell = $LMap[$row][$col][MINERAL];
+            if ($cell->[SPECIES] == WALL) {
+                if (0 == int rand 20) {
+                    $property_damage = 1;
+                } else {
+                    $take_shot = 0 unless $missed;
+                }
+                return -1;
+            } elsif ($cell->[SPECIES] == RUBBLE) {
+                # similar FOV problem as for player, see raycast. also
+                # should mean that rubble is good cover for the hero
+                if (0 == int rand 2) {
+                    if (0 == int rand 200) {
+                        $property_damage = 1;
+                    } else {
+                        $take_shot = 0 unless $missed;
+                    }
+                    return -1;
+                }
+            }
+            return 0;
+        },
+        $mcol,
+        $mrow,
+        $tcol,
+        $trow
+    );
+
+    warn "LOCK $self->[DISPLAY] ($take_shot, $missed) " . DumperA P => \@path;
+    return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
+
+    for my $point (@path) {
+        my $loc = join ',', $point->@*;
+        print at(map { MAP_DOFF + $_ } $point->@*), '-'
+          if exists $Visible_Cell{$loc};
+    }
+    my $loc = $tcol . ',' . $trow;
+    my $lmc = $LMap[$trow][$tcol];
+    if ($property_damage) {
+        my $cell = $lmc->[MINERAL];
+        reduce($LMap[$trow][$tcol]);
+        if (exists $Visible_Cell{$loc}) {
+            log_message('A '
+                  . $Descript{ $cell->[SPECIES] }
+                  . ' explodes in a shower of fragments!');
+        }
+    } else {
+        if ($missed) {
+            my $buddy = $LMap[$trow][$tcol][ANIMAL];
+            apply_damage($buddy, 'attackby', $self) if defined $buddy;
+        } else {
+            apply_damage($Animates[HERO], 'attackby', $self);
+        }
+    }
+
+    if (exists $Visible_Cell{$loc}) {
+        my $cell = $lmc->[ANIMAL] // $lmc->[VEGGIE] // $lmc->[MINERAL];
+        print at(map { MAP_DOFF + $_ } $tcol, $trow), $cell->[DISPLAY];
+    }
+
+    $Violent_Sleep_Of_Reason = 1;
+
+    return MOVE_OKAY, $weap->[W_COST];
+}
+
+# like shooter but can only fire across totally open ground. advanced
+# targetting arrays prevent friendly fire and property damage
+sub update_stalker {
+    my ($self) = @_;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+
+    # is this even happening?
+    my $weap = $self->[STASH][WEAPON];
+    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
+    warn "DISTANCE $self->[DISPLAY] at $dist\n";
+    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+
+    my $distf = $dist / $weap->[W_RANGE];
+    return MOVE_OKAY, DEFAULT_COST
+      if int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100);
+
+    my $take_shot = 1;
+    my @path;
+    linecb(
+        sub {
+            my ($col, $row) = @_;
+            if ($col == $tcol and $row == $trow) {    # gotcha
+                push @path, [ $col, $row ];
+                return 0;
+            }
+            # not even over acid
+            my $cell = $LMap[$row][$col][MINERAL];
+            if (   defined $LMap[$row][$col][ANIMAL]
+                or $cell->[SPECIES] == WALL
+                or $cell->[SPECIES] == RUBBLE
+                or $cell->[SPECIES] == ACID) {
+                $take_shot = 0;
+                return -1;
+            }
+            push @path, [ $col, $row ];
+        },
+        $mcol,
+        $mrow,
+        $tcol,
+        $trow
+    );
+
+    warn "LOCK $self->[DISPLAY] ($take_shot) " . DumperA P => \@path;
+    return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
+
+    for my $point (@path) {
+        my $loc = join ',', $point->@*;
+        print at(map { MAP_DOFF + $_ } $point->@*), '-'
+          if exists $Visible_Cell{$loc};
+    }
+    apply_damage($Animates[HERO], 'attackby', $self);
+
+    $Violent_Sleep_Of_Reason = 1;
+
+    return MOVE_OKAY, $weap->[W_COST];
 }
 
 sub use_item {
@@ -1510,12 +1640,14 @@ sub veggie_name {
 }
 
 sub with_adjacent {
-    my ($col, $row, $fn) = @_;
+    my ($col, $row, $callback) = @_;
     for my $adj (
         [ -1, -1 ], [ -1, 0 ],  [ -1, 1 ], [ 0, -1 ],
         [ 0,  1 ],  [ 1,  -1 ], [ 1,  0 ], [ 1, 1 ]
     ) {
-        $fn->($col + $adj->[PCOL], $row + $adj->[PROW]);
+        my ($ac, $ar) = ($col + $adj->[PCOL], $row + $adj->[PROW]);
+        next if $ac < 0 or $ac >= MAP_COLS or $ar < 0 or $ar >= MAP_ROWS;
+        $callback->([$ac, $ar]);
     }
 }
 
