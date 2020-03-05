@@ -92,7 +92,8 @@ sub ACID ()    { 10 }
 sub RUBBLE ()  { 11 }
 sub WALL ()    { 12 }
 
-sub AMULET_NAME () { 'Dragonstone' }
+sub AMULET_NAME ()  { 'Dragonstone' }
+sub AMULET_VALUE () { 1000 }
 
 # for ANIMALS (shared with VEGGIES and MINERALS for the first few slots)
 sub GENUS ()      { 0 }
@@ -113,6 +114,7 @@ sub SHIELDUP ()  { 4 }     # player shield recharge gem
 # GEM stash slots
 sub GEM_NAME ()  { 0 }
 sub GEM_VALUE () { 1 }
+sub GEM_REGEN () { 2 }
 
 sub START_HP () { 100 }           # player start (and max) HP
 sub LOOT_MAX () { NEED_ROWS - 2 } # avoids scrolling, status bar wipeout
@@ -132,7 +134,6 @@ sub CAN_MOVE ()     { 0 }
 sub DEFAULT_COST () { 10 }
 sub DIAG_COST ()    { 14 }
 sub NLVL_COST ()    { 20 }    # time to gate to next level
-sub TIME_TO_DIE ()  { 2 }     # turns before quit possible after death
 
 ########################################################################
 #
@@ -154,7 +155,7 @@ our %Damage_From = (
     acidburn => sub {
         my ($duration) = @_;
         my $burn = 0;
-        $burn += int rand 2 for 1..$duration;
+        $burn += int rand 2 for 1 .. $duration;
         return $burn;
     },
     attackby => sub {
@@ -176,13 +177,13 @@ our %Damage_From = (
     # distance and environment effects will reduce this damage rate
     # over time
     GHAST,
-    sub { roll(1, 8) },
+    sub { roll(3, 2) - 1 },
     MIMIC,
-    sub { roll(2, 8) },
+    sub { roll(2, 6) - 1 },
     STALKER,
     sub { roll(4, 4) },
     TROLL,
-    sub { roll(3, 6) + roll(2, 8) - 2 },
+    sub { roll(3, 6) + roll(2, 8) - 4 },
 );
 
 # extra details on monster weapons; HIT is a to-hit bonus (on a 1d100
@@ -191,9 +192,10 @@ our %Damage_From = (
 #
 #   WEAP_HIT, W_RANGE, W_COST
 our %Xarci_Bedo = (
-    GHAST,   [ 25, 6,  6 ],  MIMIC, [ 35, 7, 10 ],
-    STALKER, [ 40, 12, 18 ], TROLL, [ 0,  8, 32 ],
+    GHAST,   [ 25, 6,  5 ],  MIMIC, [ 35, 7, 10 ],
+    STALKER, [ 40, 12, 20 ], TROLL, [ 0,  8, 30 ],
 );
+# TODO probably also want monster HP being set somewhere near here
 
 # these are "class objects"; in other words there is only one WALL in
 # all WALL cells (see reify, reduce, and the make_* routines)
@@ -205,13 +207,13 @@ our %Things = (
     FLOOR,   [ MINERAL, FLOOR,   '.' ],
     GATE,    [ MINERAL, GATE,    '%' ],
     GEM,     [ VEGGIE,  GEM,     '*' ],
-    GHAST,   [ ANIMAL,  GHAST,   'G', \&update_shooter ],
+    GHAST,   [ ANIMAL,  GHAST,   'G', \&update_ghast ],
     HERO,    [ ANIMAL,  HERO,    '@' ],
     HOLE,    [ MINERAL, HOLE,    'o' ],
     MIMIC,   [ ANIMAL,  MIMIC,   'M', \&update_mortar ],
     RUBBLE,  [ MINERAL, RUBBLE,  '^' ],
     STALKER, [ ANIMAL,  STALKER, 'Q', \&update_stalker ],
-    TROLL,   [ ANIMAL,  TROLL,   'T', \&update_shooter ],
+    TROLL,   [ ANIMAL,  TROLL,   'T', \&update_troll ],
     WALL,    [ MINERAL, WALL,    '#' ],
 );
 
@@ -637,23 +639,30 @@ sub generate_level {
     );
 
     make_monster(
+        50, 0,
+        species => TROLL,
+        hp      => 48,
+        energy  => 10,
+    );
+
+    make_monster(
         7, 8,
         species => GHAST,
-        hp      => 16,
+        hp      => 32,
         energy  => 10,
     );
 
     make_monster(
         17, 17,
         species => MIMIC,
-        hp      => 24,
+        hp      => 16,
         energy  => 10,
     );
 
     make_monster(
         40, 20,
         species => STALKER,
-        hp      => 32,
+        hp      => 24,
         energy  => 10,
     );
 
@@ -764,7 +773,7 @@ BOSS_SCREEN
     refresh_board();
 }
 
-# expensive gem that speciated
+# expensive gem (vegetable) that speciated
 sub make_amulet {
     my ($col, $row) = @_;
     state $made = 0;
@@ -775,39 +784,44 @@ sub make_amulet {
         warn "already made an amulet\n";
         return;
     }
-    my $amulet;
-    $amulet->@[ GENUS, SPECIES, DISPLAY ] = $Things{ AMULET, }->@*;
-    $amulet->[STASH][GEM_NAME] = AMULET_NAME;
-    $GGV += $amulet->[STASH][GEM_VALUE] = 1000;
+    my $gem;
+    $gem->@[ GENUS, SPECIES, DISPLAY ] = $Things{ AMULET, }->@*;
+    $gem->[STASH]->@[ GEM_NAME, GEM_REGEN ] = (AMULET_NAME, 1);
+    $GGV += $gem->[STASH][GEM_VALUE] = AMULET_VALUE;
     # TODO make_* shouldn't need to know about LMAP
-    $LMap[$row][$col][VEGGIE] = $amulet;
+    $LMap[$row][$col][VEGGIE] = $gem;
     $made = 1;
-    return $amulet;
+    return $gem;
 }
 
 sub make_gem {
     my ($col, $row) = @_;
     die "DBG already a veggie $col,$row??\n"
       if defined $LMap[$row][$col][VEGGIE];
-    my ($name, $value);
-    if (int rand 16 == 0) {
+    my ($name, $value, $regen);
+    if (int rand 20 == 0) {
         $name  = "Bloodstone";
-        $value = 80 + roll(4, 10);
+        $value = 160 + roll(8, 10);
+        $regen = 2;
     } elsif (int rand 8 == 0) {
         $name  = "Sunstone";
-        $value = 40 + roll(2, 10);
+        $value = 80 + roll(4, 10);
+        $regen = 3;
     } else {
         $name  = "Moonstone";
-        $value = 10 + roll(2, 10);
+        $value = 40 + roll(2, 10);
+        $regen = 4;
     }
     my @adj = qw/Imperial Mystic Pale Rose Smoky Warped/;
-    if (int rand 2 == 0) {
+    if (int rand 6 == 0) {
         $name = $adj[ rand @adj ] . ' ' . $name;
-        $value += 10 + roll(2, 20);
+        $value += 40 + roll(4, 8);
+        $regen--;
     }
     my $gem;
     $gem->@[ GENUS, SPECIES, DISPLAY ] = $Things{ GEM, }->@*;
-    $gem->[STASH]->@[ GEM_NAME, GEM_VALUE ] = ($name, $value);
+    $gem->[STASH]->@[ GEM_NAME, GEM_VALUE, GEM_REGEN ] =
+      ($name, $value, $regen);
     $GGV += $value;
     # TODO not need know about
     $LMap[$row][$col][VEGGIE] = $gem;
@@ -1076,7 +1090,7 @@ sub move_remove {
 
 sub nope_regarding {
     my ($message) = @_;
-    print AT_MSG_ROW, " \e[1m/!\\ ", $message, ' (Y/N)', TERM_NORM;
+    print AT_MSG_ROW, ' /!\ ', $message, ' (Y/N)';
     my ($key, $ret);
     while (1) {
         $key = ReadKey(0);
@@ -1237,8 +1251,7 @@ sub rubble_delay {
 
 sub score {
     my $score = loot_value();
-    return
-      "Score: $score in $Turn_Count turns and $Energy_Spent energy use";
+    return "Score: $score in $Turn_Count turns";
 }
 
 # COSMETIC inline display_ calls here for speeds?
@@ -1306,20 +1319,101 @@ sub loot_value {
     return $value;
 }
 
-# dead player gets different update routine (similar to how POWDER still
-# runs the dungeon after death?)
 sub update_gameover {
     state $count = 0;
+    raycast_fov(1);
     tcflush(STDIN_FILENO, TCIFLUSH);
     my $key = ReadKey(0);
-    if ($count > TIME_TO_DIE) {
+    if ($count > 2) {
         print AT_MSG_ROW, CLEAR_RIGHT, '-- press Esc to continue --';
         has_lost() if $key eq "\033" or $key eq 'q';
-    } elsif ($count == 0) {
+    } elsif ($count == 1) {
         log_message('Communication lost with remote unit.');
     }
     $count++;
     return MOVE_OKAY, DEFAULT_COST;
+}
+
+sub update_ghast {
+    my ($self) = @_;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+
+    # is this even happening?
+    my $weap = $self->[STASH][WEAPON];
+    my $dist = sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2);
+    warn "DISTANCE $self->[DISPLAY] at $dist\n";
+    return MOVE_OKAY, DEFAULT_COST if $dist > $weap->[W_RANGE];
+
+    my $missed = 0;
+
+    # do they actually hit? simple linear to-hit based on distance plus
+    # a modifier to move things around
+    # NOTE this may need to be set higher as environmental factors below
+    # can spoil the shot
+    my $distf = $dist / $weap->[W_RANGE];
+    if (int rand 100 > $weap->[WEAP_HIT] + int((1 - $distf) * 100)) {
+        # missed... either hold fire or hold down the fire
+        return MOVE_OKAY, DEFAULT_COST if 0 == int rand 3;
+        my @nearby;
+        with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
+        ($tcol, $trow) = $nearby[ rand @nearby ]->@*;
+        $missed = 1;
+    }
+
+    my @path;
+    linecb(
+        sub {
+            my ($col, $row, $iters) = @_;
+            push @path, [ $col, $row ];
+            if (defined $LMap[$row][$col][ANIMAL]
+                and $LMap[$row][$col][ANIMAL][SPECIES] != HERO) {
+                ($tcol, $trow) = ($col, $row) if $missed and 0 == int rand 3;
+                return -1;
+            }
+            my $cell = $LMap[$row][$col][MINERAL];
+            if ($cell->[SPECIES] == WALL) {
+                $missed = 1;
+                return -1;
+            } elsif ($cell->[SPECIES] == RUBBLE) {
+                if (0 == int rand 3) {
+                    $missed = 1;
+                    return -1;
+                }
+            }
+            return 0;
+        },
+        $mcol,
+        $mrow,
+        $tcol,
+        $trow
+    );
+
+    warn "LOCK $self->[DISPLAY] (m = $missed) " . DumperA P => \@path;
+    return MOVE_OKAY, DEFAULT_COST unless @path;
+
+    for my $point (@path) {
+        my $loc = join ',', $point->@*;
+        print at(map { MAP_DOFF + $_ } $point->@*), '-'
+          if exists $Visible_Cell{$loc};
+    }
+    my $loc = $tcol . ',' . $trow;
+    my $lmc = $LMap[$trow][$tcol];
+    if ($missed) {
+        my $buddy = $LMap[$trow][$tcol][ANIMAL];
+        apply_damage($buddy, 'attackby', $self) if defined $buddy;
+    } else {
+        apply_damage($Animates[HERO], 'attackby', $self);
+    }
+
+    if (exists $Visible_Cell{$loc}) {
+        my $cell = $lmc->[ANIMAL] // $lmc->[VEGGIE] // $lmc->[MINERAL];
+        print at(map { MAP_DOFF + $_ } $tcol, $trow), $cell->[DISPLAY];
+    }
+
+    $Violent_Sleep_Of_Reason = 1;
+
+    return MOVE_OKAY, $weap->[W_COST];
 }
 
 sub update_mortar {
@@ -1372,7 +1466,7 @@ sub update_mortar {
             reduce($LMap[$nrow][$ncol]) if 0 == int rand 20;
         }
     } else {
-        log_message('A mortar shell explodes about you!');
+        log_message('A mortar shell strikes you!');
         apply_damage($Animates[HERO], 'attackby', $self);
     }
 
@@ -1417,19 +1511,20 @@ sub update_player {
         my $need  = START_HP - $self->[STASH][HITPOINTS];
         my $offer = between(
             0,
-            int($cost / 3),    # max heal rate over "time"
+            int($cost / $self->[STASH][SHIELDUP][STASH][GEM_REGEN]),
             $self->[STASH][SHIELDUP][STASH][GEM_VALUE]
         );
+
         my $heal = between(0, $need, $offer);
-        #warn "HEALUP $need $offer $heal\n";
+        warn "HEALUP $need $offer $heal\n";
         $self->[STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
         $self->[STASH][HITPOINTS]                  += $heal;
         $GGV                                       -= $heal;
-        # <= 0 and meh if hit release time
-        if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] < 0) {
-            die "DBG math is hard??";
-        }
-        if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] == 0) {
+
+        if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] <= 0) {
+            # ooops
+            log_message('The ' . AMULET_NAME . ' burns up!')
+              if $self->[STASH][SHIELDUP][STASH][GEM_NAME] eq AMULET_NAME;
             log_code('0113');
             undef $self->[STASH][SHIELDUP];
             print display_shieldup();
@@ -1443,7 +1538,7 @@ sub update_player {
 }
 
 # when player is in range try to shoot them
-sub update_shooter {
+sub update_troll {
     my ($self) = @_;
     my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
@@ -1475,7 +1570,7 @@ sub update_shooter {
             push @path, [ $col, $row ];
             if ($iters >= $weap->[W_RANGE]) {
                 ($tcol, $trow) = ($col, $row) if $missed;
-                return -1
+                return -1;
             }
             if (defined $LMap[$row][$col][ANIMAL]
                 and $LMap[$row][$col][ANIMAL][SPECIES] != HERO) {
@@ -1491,7 +1586,7 @@ sub update_shooter {
                 if (0 == int rand 20) {
                     $property_damage = 1;
                 } else {
-                    $take_shot = 0 unless $missed;
+                    $take_shot = 0;
                 }
                 return -1;
             } elsif ($cell->[SPECIES] == RUBBLE) {
@@ -1514,7 +1609,8 @@ sub update_shooter {
         $trow
     );
 
-    warn "LOCK $self->[DISPLAY] ($take_shot, $missed) " . DumperA P => \@path;
+    warn "LOCK $self->[DISPLAY] ($take_shot, $missed) "
+      . DumperA P => \@path;
     return MOVE_OKAY, DEFAULT_COST unless $take_shot and @path;
 
     for my $point (@path) {
@@ -1647,7 +1743,7 @@ sub with_adjacent {
     ) {
         my ($ac, $ar) = ($col + $adj->[PCOL], $row + $adj->[PROW]);
         next if $ac < 0 or $ac >= MAP_COLS or $ar < 0 or $ar >= MAP_ROWS;
-        $callback->([$ac, $ar]);
+        $callback->([ $ac, $ar ]);
     }
 }
 

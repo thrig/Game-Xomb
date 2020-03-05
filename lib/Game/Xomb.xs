@@ -10,7 +10,13 @@
 #define MAP_COLS 78
 #define MAP_ROWS 22
 
-MODULE = Game::Xomb		PACKAGE = Game::Xomb		
+/* linecb - Bresenham with some features to keep it from going off
+ * of the map and to skip the first point and abort should the
+ * callback return -1
+ * 
+ * walkcb - linecb, but does not stop at x1,y1 */
+
+MODULE = Game::Xomb             PACKAGE = Game::Xomb            
 PROTOTYPES: ENABLE
 
 void
