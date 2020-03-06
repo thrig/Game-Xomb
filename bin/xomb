@@ -88,9 +88,9 @@ Shows the B<xomb> version and quits the game.
 The most recent message is shown at the top of the screen. More of these
 can be viewed using the C<M> command. The status bar at the bottom
 
-    Level 01 E10 SP[=========================-         ][ .][*] 121B
+    Level 01 T10 SP[=========================-         ][ .][*] 121B
 
-shows the level (C<1>), the cost of the last energy-consuming move
+shows the level (C<1>), the time of the last energy-consuming move
 (C<10>), shield points remaining, the item and ground tile of the
 current cell (here: no item and an empty cell), whether a gem is loaded
 for shield repair (yes), and finally the error code display (C<121B>).
@@ -98,8 +98,8 @@ Consult the L</"DIAGNOSTICS"> section for details on the error codes.
 
 The middle of the screen shows the level map. Various L</"Symbols"> are
 present in this space. Note that the Field Operation View (FOV) readouts
-may be impacted by the harsh conditions on Minos III. Rubble in
-particular may cause the suboptimal degredation in the FOV.
+may be impacted by the harsh conditions on Minos III, and the scanner is
+an older model.
 
 =head2 Commands
 
@@ -115,6 +115,7 @@ navigate.
     M - show messages     < > - activate gate    E - equip a gem
     p - clear PKC code    C-l - redraw screen    R - remove a gem
     ? - show help         v   - show version     d - drop a gem
+    @ - show location     Q   - quit the game
 
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
@@ -123,9 +124,9 @@ navigate.
 =head2 Symbols
 
 These may be inspected in-game using the examine command, assuming they
-were picked up by the FOV scan. At most only one Xarci Bedo, item, and
-ground tile can occupy the same cell. Scientists believe this is due to
-particularities of the geology on Minos III.
+were picked up by the FOV scanner. At most only one Xarci Bedo, item,
+and ground tile can occupy the same cell. Scientists believe this is due
+to particularities of the geology on Minos III.
 
 =over 4
 
@@ -133,11 +134,31 @@ particularities of the geology on Minos III.
 
 Vessel location.
 
+=item C< >
+
+A crevasse in the ground that you can fall down.
+
 =item C<%>
 
-A gate to the next level via the C<< > >> command. A gate takes some
+A gate to the next level (via the C<< > >> command). A gate takes some
 time to complete the level transition. Ascent is only possible with the
-Dragonstone using C<< < >> on the gate.
+Dragonstone using C<< < >> on the gate, as is traditional.
+
+=item C<#>
+
+Wall. Impassable. Generally blocks FOV.
+
+=item C<^>
+
+Rubble. Somewhat passable. Sometimes blocks FOV.
+
+=item C<~>
+
+Acid pond.
+
+=item C<.>
+
+An empty cell.
 
 =item C<*>
 
@@ -149,27 +170,6 @@ stresses. The gem value is shown before the name:
     C) * (19) Moonstone
     D) * (58) Warped Moonstone
     -- press Esc to continue or (d)rop, (e)quip --
-
-=item C<#>
-
-Wall. Impassable. Generally blocks FOV.
-
-=item C<^>
-
-Rubble. Somewhat passable. Often blocks FOV.
-
-=item C<~>
-
-Acid pond.
-
-=item C<.>
-
-An empty cell.
-
-=item C<o>
-
-A hole that will drop the vessel to the next level. Pilots should be
-aware that safe descent is not certified under all conditions.
 
 =back
 
@@ -202,6 +202,10 @@ Gate activation error.
 =head2 PKC-0010
 
 Dragonstone is required for vertical ascent module gate activation.
+
+=head2 PKC-0014
+
+Gate is out of service, or was never enabled by the contractors.
 
 =head2 PKC-007E
 

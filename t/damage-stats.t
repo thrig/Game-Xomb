@@ -35,7 +35,7 @@ SKIP: {
     for my $name (sort { $a cmp $b } keys %Game::Xomb::Damage_From) {
         my $fn = $Game::Xomb::Damage_From{$name};
         if ($name eq 'plburn') {
-            tally($fn, $name . $_, $_) for 1 .. 3;
+            tally($fn, "$name$_", $_) for 1 .. 3;
         } else {
             tally($fn, $name, $args{$name}->@*);
         }
@@ -69,8 +69,8 @@ sub tally {
     ok looks_like_number($ret);
     is $ret, int $ret;
 
-    $name = $Game::Xomb::Things{$name}->[Game::Xomb::DISPLAY]
-      if exists $Game::Xomb::Things{$name};
+    $name = $Game::Xomb::Thingy{$name}->[Game::Xomb::DISPLAY]
+      if exists $Game::Xomb::Thingy{$name};
 
     my @ret = map { $fn->(@rest) } 1 .. $trials;
     my ($mean, $min, $max) = mean(\@ret);
