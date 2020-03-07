@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '1.00';
+our $VERSION = '1.01';
 
 use 5.24.0;
 use warnings;
@@ -338,6 +338,7 @@ our %Key_Commands = (
     'p'    => sub { pkc_clear(); return MOVE_FAILED, 0 },
     'v'    => \&report_version,
     'x'    => \&move_examine,
+    '~'    => \&report_version,
     "\003" => sub { return MOVE_FAILED, 0, '1203' },                 # <C-c>
     "\014" => sub { log_dim(); refresh_board(); MOVE_FAILED, 0 },    # <C-l>
     "\032" => sub { return MOVE_FAILED, 0, '1220' },                 # <C-z>
@@ -702,7 +703,6 @@ sub generate_map {
               if @free;
         }
     }
-
     # could also do stalker or mimic sniper setups, but that's more work
 }
 
@@ -1472,7 +1472,7 @@ sub report_position {
 }
 
 sub report_version {
-    log_message('xomb ' . $VERSION . ' seed ' . $Seed);
+    log_message('xomb ' . $VERSION . ' seed ' . $Seed . ' turn ' . $Turn_Count);
     return MOVE_FAILED, 0;
 }
 
@@ -1982,7 +1982,7 @@ install and run the game via:
     cpanm Game::Xomb
     xomb
 
-Use the C<?> key in game to show the help text. The L<xomb(1)>
+Use the C<?> key in game to show the help text. The B<xomb>
 documentation details other useful game information; it should be
 available once the module is installed via:
 
@@ -2002,7 +2002,7 @@ L<https://github.com/thrig/Game-Xomb>
 
 L<Game::PlatformsOfPeril> from which this code evolved.
 
-7DRL 2020
+7DRL 2020 - https://itch.io/jam/7drl-challenge-2020
 
 Vektor - Terminal Redux
 

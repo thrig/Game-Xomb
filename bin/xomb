@@ -67,11 +67,18 @@ B<xomb> I<--delay=f> I<--err=file> I<--seed=i> I<--version>
 
 =head1 DESCRIPTION
 
-B<xomb> is a computer fantasy game. The object of the game is to survive
-the attacks of the Xarci Bedo and obtain a lot of gems. To win the game
-you must locate the Dragonstone and get it out.
-
-A game should take under 15 minutes to complete.
+                                                         .
+                                                         ..      #
+  Xomb is a computer fantasy game. The object of          ..#   ~#
+  the game is to survive the attacks of the                ... ..#
+  Xarci Bedo and to obtain a lot of gems. To win            #.#.#
+  the game you must locate the Dragonstone which             #@#
+  is somewhere below the 3rd level of the                   ..#.~
+  dungeon and get it out.                                  ... ~.~
+                                                         ....   ..~.
+  A game should take under 15 minutes to complete.      ....     ~.^~
+                                                         . .     ...
+                                                                  ~
 
 =head2 Options
 
