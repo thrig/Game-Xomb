@@ -13,7 +13,7 @@ use Test::Most;
 my $trials = 1000;
 
 my $count     = keys %Game::Xomb::Damage_From;
-my $testcount = $count * 3 + 6;
+my $testcount = $count * 3 + 3;
 
 plan tests => $testcount;
 
@@ -21,7 +21,6 @@ my $hero = Game::Xomb::make_player();
 
 my %args = (
     acidburn => [qw/10/],    # $duration, default
-    attackby => [$hero],
     falling  => [qw//],      # smaller body does not matter to Gravity
     plspash  => [qw//],
 );
@@ -33,6 +32,9 @@ SKIP: {
       unless $ENV{XOMB_STATS};
 
     for my $name (sort { $a cmp $b } keys %Game::Xomb::Damage_From) {
+        # duplicates '@' damage stats
+        next if $name eq 'attackby';
+
         my $fn = $Game::Xomb::Damage_From{$name};
         if ($name eq 'plburn') {
             tally($fn, "$name$_", $_) for 1 .. 3;
@@ -64,7 +66,7 @@ sub sd {
 
 sub tally {
     my ($fn, $name, @rest) = @_;
-    my $ret = $fn->(@rest);
+    my $ret = $fn->([], @rest);
     # was there somewhat viable output from the fn?
     ok looks_like_number($ret);
     is $ret, int $ret;
@@ -72,7 +74,7 @@ sub tally {
     $name = $Game::Xomb::Thingy{$name}->[Game::Xomb::DISPLAY]
       if exists $Game::Xomb::Thingy{$name};
 
-    my @ret = map { $fn->(@rest) } 1 .. $trials;
+    my @ret = map { $fn->([], @rest) } 1 .. $trials;
     my ($mean, $min, $max) = mean(\@ret);
     my $sd = sd(\@ret, $mean);
     push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean,

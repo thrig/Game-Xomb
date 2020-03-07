@@ -62,10 +62,10 @@ or without dependencies the manual old fashioned way:
 
 and new releases may be authored along the lines of:
 
-    git tag -u ... -s
+    git tag -u ... -s v...
     git push github master
     RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build disttest
-    gzip --best Game-Xomb-...
+    RELEASE_TESTING=1 TEST_SIGNATURE=1 ./Build dist
     cpan-upload ...
     ./Build realclean
 
