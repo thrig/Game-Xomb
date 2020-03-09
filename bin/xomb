@@ -110,7 +110,7 @@ Shows the B<xomb> version and quits the game.
 The most recent message is shown at the top of the screen. More of these
 can be viewed using the C<M> command. The status bar at the bottom
 
-    Level 01 T10 SP[=========================-         ][ .][*] 121B
+    Level 01 t10 SP[=========================-         ][ .][*] 121B
 
 shows the level (C<1>), the time or cost of the last energy-consuming
 move (C<10>), shield points remaining, the item and ground tile of the
@@ -128,23 +128,94 @@ view of the FOV scanner. Range and coordinate details are also provided.
 
 =head2 Commands
 
-With numlock enabled a numeric keypad may be able to be used to
-navigate.
+=head3 Motion
 
-     y  k  u     Motion is traditional to rogue(6) as shown in the
-      \ | /      compass to the left. Other commands, of which some
-    h - @ - l    take time to complete, include:
-      / | \             
-     b  j  n                . - wait a turn      x - examine board
-                          g , - pick up item     i - show inventory
-    M - show messages     < > - activate gate    E - equip a gem
-    p - clear PKC code    C-l - redraw screen    R - remove a gem
-    ? - show help         v   - show version     d - drop a gem
-    @ - show location     Q   - quit the game
+Movement is like that of L<rogue(6)>. With numlock enabled a numeric
+keypad may be able to be used.
 
-    Esc or q will exit from sub-displays such as this one. Prompts
-    must be answered with Y to carry out the action; N or n or Esc
-    will reject the action.
+   y  k  u
+    \ | /
+  h - @ - l
+    / | \
+   b  j  n
+
+Unlike in L<rogue(6)> diagonal moves cost more time (C<14> versus C<10>).
+
+=head3 Other
+
+=over 4
+
+=item C<,> C<g>
+
+Pick up the item in the current cell. Takes some amount of time
+to complete (takes energy).
+
+=item C<.> C< >
+
+Wait a turn. Takes energy.
+
+=item C<< < >>
+
+Activate a gate for ascent. Only possible while carrying the
+Dragonstone. Takes energy.
+
+=item C<< > >>
+
+Activate a gate for descent. Takes energy.
+
+=item C<?>
+
+Show the in-game help screen of available commands. Esc or C<q> will
+exit the submenu. Does not take energy.
+
+=item C<@>
+
+Reports the current position of the player in the level map. Does not
+take energy.
+
+=item C<E>
+
+Equips an item in the inventory. Does not take energy.
+
+=item C<M>
+
+Show recent messages. Esc or C<q> will exit the submenu. Does not take energy.
+
+=item C<Q>
+
+Quit the game. This will issue an "are you sure" prompt that takes
+C<Y> or C<N> to complete or escape that action.
+
+=item C<R>
+
+Remove an equipped item. Does not take energy.
+
+=item C<d>
+
+Drop an item from inventory. Does not take energy.
+
+=item C<i>
+
+Show the inventory. Does not take energy. Esc or C<q> will exit the
+submenu, and other commands may be available within this menu.
+
+=item C<p>
+
+Clear the PKC error code. See L</"DIAGNOSTICS"> for more details on
+these codes.
+
+=item C<v> C<~>
+
+Show the game version, seed, and current turn count. Does not
+take energy.
+
+=item C<x>
+
+Examine the level map. Esc or C<q> will exit the submenu. Use the
+L</"Motion"> commands to move the cursor. Holding down the shift key
+will move the cursor four times faster. Does not take energy.
+
+=back
 
 =head2 Symbols
 
@@ -302,6 +373,7 @@ Jeremy Mates
 
 B<xomb> assumes that the terminal used supports various ANSI or XTerm
 Control Sequences. Given certain time constraints (7DRL 2020) not much
-portability testing has been done.
+portability testing has been done. It should work where any suitable
+unix terminal is available.
 
 =cut

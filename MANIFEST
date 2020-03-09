@@ -12,5 +12,7 @@ lib/Game/typemap
 ppport.h
 t/00-load.t
 t/damage-stats.t
+t/lib/Stats.pm
+t/mapgen.t
 t/pod.t
 t/xomb.t

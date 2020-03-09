@@ -11,7 +11,7 @@ Module::Build->new(
     include_dirs       => ['.'],
     license            => 'bsd',
     needs_compiler     => 1,
-    release_status     => 'stable',                                    # LOL
+    release_status     => 'stable',
     sign               => 1,
     configure_requires => {
         'CPAN::Meta'    => '2.142060',
@@ -45,7 +45,6 @@ Module::Build->new(
             },
         },
     },
-    meta_merge => {
-        resources => { repository => 'https://github.com/thrig/Game-Xomb' }
-    },
+    meta_merge =>
+      { resources => { repository => 'https://github.com/thrig/Game-Xomb' } },
 )->create_build_script();

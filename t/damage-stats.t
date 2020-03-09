@@ -10,6 +10,9 @@ use Game::Xomb;
 use Scalar::Util qw(looks_like_number);
 use Test::Most;
 
+use lib qw(t/lib);
+use Stats;
+
 my $trials = 1000;
 
 my $count     = keys %Game::Xomb::Damage_From;
@@ -43,25 +46,6 @@ SKIP: {
         }
     }
     diag "sample damage - mean sd [min,max]:\n", @outcomes;
-}
-
-sub mean {
-    my ($ref) = @_;
-    my $N     = $ref->@*;
-    my $sum   = 0;
-    my $min   = ~0;
-    my $max   = -1;
-    for my $x ($ref->@*) {
-        $sum += $x;
-        if    ($x < $min) { $min = $x }
-        elsif ($x > $max) { $max = $x }
-    }
-    return $sum / $N, $min, $max;
-}
-
-sub sd {
-    my ($ref, $mean) = @_;
-    return sqrt mean([ map { ($_ - $mean)**2 } $ref->@* ]);
 }
 
 sub tally {
