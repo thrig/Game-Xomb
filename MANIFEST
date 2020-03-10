@@ -10,9 +10,11 @@ lib/Game/Xomb.pm
 lib/Game/Xomb.xs
 lib/Game/typemap
 ppport.h
+src/jsf.c
+src/jsf.h
 t/00-load.t
 t/damage-stats.t
-t/lib/Stats.pm
+t/jsf.t
 t/mapgen.t
 t/pod.t
 t/xomb.t

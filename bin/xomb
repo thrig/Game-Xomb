@@ -6,6 +6,7 @@ use 5.24.0;
 use warnings;
 use Getopt::Long qw(GetOptions);
 use Game::Xomb;
+use POSIX qw(strftime);
 
 GetOptions(
     'help|h|?' => sub {
@@ -14,8 +15,10 @@ Usage: xomb [options]
 
   --err     - send STDERR to this file if not already redirected
   --delay   - sleep delay for when player may want to take notice
-  --seed    - set the game seed
   --version - shows xomb version and then quits
+
+  --seed    - set the game seed to a particular value
+  --today   - set the game seed to YYYYMMDD in the local timezone
 
 xomb hides STDERR by default to not show warning or error messages;
 debug with a command similar to
@@ -28,10 +31,11 @@ and then inspect the log file when things do go awry
 TLDR
         exit 64;
     },
-    'delay=f'   => \$Game::Xomb::Draw_Delay,
-    'err=s'     => \my $err,
-    'seed=i'    => \$Game::Xomb::Seed,
-    'version|v' => sub { say $Game::Xomb::VERSION; exit 1 },
+    'delay=f'     => \$Game::Xomb::Draw_Delay,
+    'err=s'       => \my $err,
+    'seed=i'      => \$Game::Xomb::Seed,
+    'today|daily' => \my $Flag_Today,
+    'version|v'   => sub { say $Game::Xomb::VERSION; exit 1 },
 ) or exit 64;
 
 if (-t STDERR) {
@@ -45,10 +49,19 @@ if (-t STDERR) {
     }
 }
 
-# NOTE this is not really portable and will likely be replaced by a
-# custom pRNG as time permits
-$Game::Xomb::Seed = srand unless defined $Game::Xomb::Seed;
-srand $Game::Xomb::Seed;
+unless (defined $Game::Xomb::Seed) {
+    # a daily seed is a tradition for Brogue
+    if ($Flag_Today) {
+        $Game::Xomb::Seed = strftime "%Y%m%d", localtime;
+    } else {
+        # eh, it's a game
+        # https://flak.tedunangst.com/post/random-in-the-wild
+        $Game::Xomb::Seed = time;
+    }
+}
+# JSF takes a uint32_t; ensure that the Perl variable matches what JSF
+# internalizes
+$Game::Xomb::Seed = unpack 'L', pack 'L', $Game::Xomb::Seed;
 
 Game::Xomb::game_loop;
 
@@ -63,7 +76,7 @@ B<xomb> - a game featuring @ versus the Xarci Bedo
 
 =head1 SYNOPSIS
 
-B<xomb> I<--delay=f> I<--err=file> I<--seed=i> I<--version>
+B<xomb> I<--delay=f> I<--err=file> [ I<--seed=i> | I<--today> ] I<--version>
 
 =head1 DESCRIPTION
 
@@ -84,22 +97,27 @@ B<xomb> I<--delay=f> I<--err=file> I<--seed=i> I<--version>
 
 =over 4
 
-=item --delay=seconds
+=item I<--delay=seconds>
 
 Floating point value to sleep after events the player may wish to take
 notice of. Probably should be much lower than C<1.0>. Default is
 C<0.15> seconds.
 
-=item --err=file
+=item I<--err=file>
 
 Send STDERR to this file if not already redirected.
 
-=item --seed=i
+=item I<--seed=i>
 
 Start the game with the seed set to the given integer value. The RNG
 algorithm will very likely change in future releases of the game.
 
-=item --version
+=item I<--today>
+
+Set the seed to YYYYMMDD in the local timezone. I<--seed> has priority
+if both are set.
+
+=item I<--version>
 
 Shows the B<xomb> version and quits the game.
 

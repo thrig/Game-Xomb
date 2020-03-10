@@ -1,8 +1,10 @@
 Revision history for Game::Xomb
 
 1.01    ????
-    * cleanup map generation logic. now possible for gems to generate on
-      top of gates in acid, monsters atop rubble, etc
+    * switch RNG to Jenkins Small Fast -- "A small noncryptographic PRNG"
+    * cleanup map generation logic. now possible for gems to
+      generate on top of gates, in acid, monsters atop rubble, the
+      player in acid, etc
     * add some map generation sanity tests (t/mapgen.t)
     * custom features for (the optional) level 5 instead of simply
       duplicating level 4 (L5 is now more difficult)

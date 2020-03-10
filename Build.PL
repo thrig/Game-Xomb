@@ -7,9 +7,13 @@ Module::Build->new(
     dist_abstract      => 'a game featuring @ versus the Xarci Bedo',
     dist_author        => 'Jeremy Mates <jeremy.mates@gmail.com>',
     dist_version_from  => 'lib/Game/Xomb.pm',
-    extra_manify_args  => { utf8 => 1 },
-    include_dirs       => ['.'],
     license            => 'bsd',
+    extra_manify_args  => { utf8 => 1 },
+    c_source           => 'src',
+    include_dirs       => [qw(. src)],
+    create_license     => 0,
+    create_readme      => 0,
+    dynamic_config     => 0,
     needs_compiler     => 1,
     release_status     => 'stable',
     sign               => 1,
@@ -31,6 +35,7 @@ Module::Build->new(
     test_requires => {
         'strict'            => 0,
         'Scalar::Util'      => 0,
+        'Statistics::Lite'  => 0,
         'Test::More'        => '0.88',    # done_testing
         'Test::Most'        => 0,
         'Test::UnixCmdWrap' => 0,

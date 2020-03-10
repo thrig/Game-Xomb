@@ -1,6 +1,9 @@
 #!perl
 #
-# how much damage do the damage functions dish out?
+# how much damage do the damage functions dish out? (this is not a full
+# fightsim, it only considers one damage event which could be an attack
+# or for acid burn a movevement cost; attacks can miss, etc)
+#
 #  cpanm App::Prove
 #  XOMB_STATS=1 prove t/damage-stats.t
 
@@ -8,10 +11,8 @@ use 5.24.0;
 use warnings;
 use Game::Xomb;
 use Scalar::Util qw(looks_like_number);
+use Statistics::Lite qw(statshash);
 use Test::Most;
-
-use lib qw(t/lib);
-use Stats;
 
 my $trials = 1000;
 
@@ -19,6 +20,8 @@ my $count     = keys %Game::Xomb::Damage_From;
 my $testcount = $count * 3 + 3;
 
 plan tests => $testcount;
+
+Game::Xomb::init_jsf(int rand 2**32);
 
 my $hero = Game::Xomb::make_player();
 
@@ -58,12 +61,13 @@ sub tally {
     $name = $Game::Xomb::Thingy{$name}->[Game::Xomb::DISPLAY]
       if exists $Game::Xomb::Thingy{$name};
 
-    my @ret = map { $fn->([], @rest) } 1 .. $trials;
-    my ($mean, $min, $max) = mean(\@ret);
-    my $sd = sd(\@ret, $mean);
-    push @outcomes, sprintf "DAMAGE %s %.2f %.2f [%d,%d]\n", $name, $mean,
-      $sd, $min, $max;
+    my @ret   = map { $fn->([], @rest) } 1 .. $trials;
+    my %stats = statshash @ret;
+    $stats{$_} = sprintf "%.2f", $stats{$_} for qw/mean stddev/;
+    push @outcomes,
+      sprintf "DAMAGE $name "
+      . join(' ', map { "$_ $stats{$_}" } qw/mean stddev min max mode/) . "\n";
 
-    # it isn't good to be negative
-    ok $min >= 0;
+    # it isn't good to be negative (because that would heal the target)
+    ok $stats{min} >= 0;
 }
