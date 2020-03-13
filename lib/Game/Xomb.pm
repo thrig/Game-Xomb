@@ -666,7 +666,7 @@ sub generate_map {
     # other monster types to camp spots as well
     my @campers = (FUNGI, FUNGI, FUNGI, FUNGI, TROLL, TROLL, STALKER, GHAST);
     my $camping = 0;
-    my $codds   = 31 + int exp $Level;
+    my $codds   = ($has_ammie ? 31 : 0) + int exp $Level;
     for my $gp (@goodp) {
         next if irand(100) > $codds;
         # MUST check here that we're not clobbering some other Animate
@@ -1535,10 +1535,8 @@ sub replay {
     while (1) {
         $key = readline $Save_FH;
         # KLUGE avoid busy-wait on "tail" of an active savegame
-        sleep(0.2);
-        if (!defined $key) {
-        }
-        last    if exists $expect->{$key};
+        sleep(0.2) unless defined $key;
+        last if exists $expect->{$key};
     }
     sleep($Replay_Delay);
     my $esc = ReadKey(-1);
@@ -1600,7 +1598,7 @@ sub score {
 
 sub update_gameover {
     state $count = 0;
-    raycast_fov(1) if $count == 0;
+    raycast_fov(1);
     tcflush(STDIN_FILENO, TCIFLUSH);
     my $key = $Read_Key->(\%Key_Commands);
     if ($count == 4) {
