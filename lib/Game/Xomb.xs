@@ -17,10 +17,49 @@
 MODULE = Game::Xomb             PACKAGE = Game::Xomb            
 PROTOTYPES: DISABLE
 
+void
+bypair (callback, ...)
+    SV *callback;
+    PREINIT:
+        int i;
+        SV *x, *y;
+    PPCODE:
+        if (!(items & 1)) croak("uneven number of arguments");
+        dSP;
+        for (i = 1; i < items; i += 2) {
+            x = ST(i);
+            y = ST(i + 1);
+            ENTER;
+            SAVETMPS;
+            PUSHMARK(SP);
+            EXTEND(SP, 2);
+            PUSHs(x);
+            PUSHs(y);
+            PUTBACK;
+            call_sv(callback, G_DISCARD);
+            SPAGAIN;
+            FREETMPS;
+            LEAVE;
+        }
+
 UV
 coinflip ()
     CODE:
         RETVAL = ranval() & 1;
+    OUTPUT:
+        RETVAL
+
+# NOTE this distance differs from the iters count in linecb() as that
+# function can do [0,0] .. [3,3] in 3 steps while this will calculate
+# 4.24, lround'd to 4
+UV
+distance (uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
+    PREINIT:
+        int dx, dy;
+    CODE:
+        dx = x1 - x0;
+        dy = y1 - y0;
+        RETVAL = lround(sqrt(dx*dx + dy*dy));
     OUTPUT:
         RETVAL
 

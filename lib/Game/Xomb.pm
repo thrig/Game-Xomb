@@ -14,9 +14,9 @@ use List::UtilsBy qw(min_by nsort_by);
 use POSIX qw(STDIN_FILENO TCIFLUSH tcflush);
 use Scalar::Util qw(weaken);
 use Term::ReadKey qw(GetTerminalSize ReadKey ReadMode);
-use Time::HiRes qw(sleep);
+use Time::HiRes qw(ualarm sleep);
 require XSLoader;
-XSLoader::load('Game::Xomb', $VERSION);    # RNG, line drawing
+XSLoader::load('Game::Xomb', $VERSION);    # distance, line drawing, RNG
 
 sub NEED_ROWS () { 24 }
 sub NEED_COLS () { 80 }
@@ -138,9 +138,13 @@ our @LMap;                    # level map. array of array of array of ...
 our $Draw_Delay   = 0.15;
 our $Energy_Spent = 0;
 our $Level        = 1;        # current level
+our $Read_Key;
+our $Replay_Delay;
+our $Save_FH;
 our $Seed;
 our $Turn_Count = 0;          # player moves
 our %Visible_Cell;            # x,y => [x,y] of cells visible in FOV
+our @Visible_Monst;
 our %Warned_About;            # limit annoying messages
 
 our %Damage_From = (
@@ -181,6 +185,7 @@ our %Damage_From = (
     # the player is probably similar to using a rapier in Brogue)
     plburn => sub {
         my (undef, $range) = @_;
+        return coinflip() if $range > 3;
         my $dice = 4 - $range;
         my $damage;
         do { $damage = roll($dice, 6) } until ($damage <= 18);
@@ -191,22 +196,22 @@ our %Damage_From = (
 
     # listed here for easy access but get called to through 'attackby'.
     GHAST,
-    sub { roll(3, 2) - 2 },
+    sub { roll(3, 2) - 1 },
     HERO,
     sub { roll(4, 3) + 2 },
     MIMIC,
-    sub { roll(2, 4) - 1 },
+    sub { roll(2, 4) },
     STALKER,
-    sub { roll(4, 2) - 1 },
+    sub { roll(4, 2) },
     TROLL,
-    sub { roll(3, 6) },
+    sub { roll(3, 6) + 2 },
 );
 
 our %Hit_Points = (FUNGI, 42, GHAST, 28, MIMIC, 24, STALKER, 36, TROLL, 48,);
 
 # NOTE these MUST be kept in sync with the W_RANGE max
 our %To_Hit = (
-    FUNGI, [ 100, 100, 100 ],
+    FUNGI, [ 100, 100, 100, 50 ],
     GHAST, [ 65, 50, 35, 25, 10 ],
     MIMIC, [ 10, 20, 35, 50, 50, 35, 20, 10 ],
     STALKER, [ 80, 75, 70, 65, 60, 55, 50, 45, 45, 30, 25, 10 ],
@@ -217,8 +222,8 @@ our %To_Hit = (
 #
 #   W_RANGE  W_COST
 our %Weap_Stats = (
-    FUNGI,   [ 3,  30 ], GHAST, [ 5, 6 ], MIMIC, [ 8, 19 ],
-    STALKER, [ 12, 21 ], TROLL, [ 7, 31 ],
+    FUNGI,   [ 4,  31 ], GHAST, [ 5, 6 ], MIMIC, [ 8, 13 ],
+    STALKER, [ 12, 21 ], TROLL, [ 7, 29 ],
 );
 
 # these are "class objects"; see reify and the make_* routines
@@ -349,10 +354,12 @@ our %Key_Commands = (
     'x'    => \&move_examine,
     '~'    => \&report_version,
     "\003" => sub { return MOVE_FAILED, 0, '1203' },                 # <C-c>
+    "\011" => sub { @_ = "\011"; goto &move_examine },               # TAB
     "\014" => sub { log_dim(); refresh_board(); MOVE_FAILED, 0 },    # <C-l>
     "\032" => sub { return MOVE_FAILED, 0, '1220' },                 # <C-z>
     "\033" => sub { return MOVE_FAILED, 0, '121B' },
 );
+# weak effort at numpad support
 @Key_Commands{qw/1 2 3 4 5 6 7 8 9/} = @Key_Commands{qw/b j n h . l y k u/};
 
 my @Level_Features = (
@@ -404,12 +411,7 @@ sub apply_passives {
     }
 }
 
-sub await_quit {
-    while (1) {
-        my $key = ReadKey(0);
-        last if $key eq "\033" or $key eq 'q';
-    }
-}
+sub await_quit { $Read_Key->({ "\033" => 1, 'q' => 1 }) }
 
 sub bad_terminal {
     return 0 unless -t *STDOUT;
@@ -466,11 +468,6 @@ sub display_shieldup {
         }
     }
     AT_SHIELDUP . '[' . $ch . ']';
-}
-
-sub distance {
-    my ($pcol, $prow, $mcol, $mrow) = @_;
-    return int sqrt(($pcol - $mcol)**2 + abs($prow - $mrow)**2);
 }
 
 # does a monster hit? -1 for out of range, 0 for miss, 1 for hit
@@ -669,7 +666,7 @@ sub generate_map {
     # other monster types to camp spots as well
     my @campers = (FUNGI, FUNGI, FUNGI, FUNGI, TROLL, TROLL, STALKER, GHAST);
     my $camping = 0;
-    my $codds   = $has_ammie ? 50 : int exp($Level) / $Level;
+    my $codds   = 31 + int exp $Level;
     for my $gp (@goodp) {
         next if irand(100) > $codds;
         # MUST check here that we're not clobbering some other Animate
@@ -704,6 +701,17 @@ sub generate_map {
     }
 
     return scalar(@seeds), $camping;
+}
+
+sub getkey {
+    my ($expect) = @_;
+    my $key;
+    while (1) {
+        $key = ReadKey(0);
+        last if exists $expect->{$key};
+    }
+    print $Save_FH $key if defined $Save_FH;
+    return $key;
 }
 
 sub has_amulet {
@@ -760,7 +768,7 @@ sub help_screen {
     M - show messages     < > - activate gate    E - equip a gem
     p - clear PKC code    C-l - redraw screen    R - remove a gem
     ? - show help         v   - show version     d - drop a gem
-    @ - show location     Q   - quit the game
+    @ - show location     Q   - quit the game  TAB - examine monster
 
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
@@ -856,12 +864,6 @@ sub load_map {
         push @log, $message;
         $lc = 1;
         show_top_message();
-    }
-
-    sub post_message {
-        my ($message) = @_;
-        while (@log >= MSG_MAX) { shift @log }
-        push @log, $message;
     }
 
     sub show_messages {
@@ -1007,8 +1009,11 @@ sub manage_inventory {
         $s .= ' or (d)rop, (E)quip' if $has_loot;
     }
     print $s, ' --';
+
+    my %choices = ("\033" => 1, 'q' => 1);
   CMD: while (1) {
-        my $key = $command // ReadKey(0);
+        my $key = $command
+          // $Read_Key->({ "\033" => 1, 'q' => 1, 'd' => 1, 'E' => 1 });
         last if $key eq "\033" or $key eq 'q';
         undef $command;
         next unless $has_loot;
@@ -1022,15 +1027,14 @@ sub manage_inventory {
                 last CMD;
             }
             while (1) {
-                my $drop = ReadKey(0);
+                @choices{ map { chr 65 + $_ } 0 .. $loot->$#* } = ();
+                my $drop = $Read_Key->(\%choices);
                 last CMD if $drop eq "\033" or $drop eq 'q';
-                if ($drop =~ m/^[A-X]$/) {    # NOTE related to LOOT_MAX
-                    my $i = ord($drop) - 65;
-                    if ($i < $loot->@*) {
-                        $Animates[HERO][LMC][VEGGIE] = splice $loot->@*, $i, 1;
-                        print display_cellobjs();
-                        last CMD;
-                    }
+                my $i = ord($drop) - 65;
+                if ($i < $loot->@*) {
+                    $Animates[HERO][LMC][VEGGIE] = splice $loot->@*, $i, 1;
+                    print display_cellobjs();
+                    last CMD;
                 }
             }
         } elsif ($key eq 'E') {
@@ -1039,14 +1043,13 @@ sub manage_inventory {
                   "-- Equip item L)able or Esc to exit --";
             }
             while (1) {
-                my $use = ReadKey(0);
+                @choices{ map { chr 65 + $_ } 0 .. $loot->$#* } = ();
+                my $use = $Read_Key->(\%choices);
                 last CMD if $use eq "\033" or $use eq 'q';
-                if ($use =~ m/^[A-X]$/) {    # NOTE related to LOOT_MAX
-                    my $i = ord($use) - 65;
-                    if ($i < $loot->@*) {
-                        use_item($loot, $i, $Animates[HERO][STASH]);
-                        last CMD;
-                    }
+                my $i = ord($use) - 65;
+                if ($i < $loot->@*) {
+                    use_item($loot, $i, $Animates[HERO][STASH]);
+                    last CMD;
                 }
             }
         }
@@ -1096,14 +1099,16 @@ sub move_equip {
 }
 
 sub move_examine {
-    my $row = $Animates[HERO][LMC][WHERE][PROW];
-    my $col = $Animates[HERO][LMC][WHERE][PCOL];
+    my ($command) = @_;
+    my $row       = $Animates[HERO][LMC][WHERE][PROW];
+    my $col       = $Animates[HERO][LMC][WHERE][PCOL];
     my ($pcol, $prow) = ($col, $row);
     print AT_MSG_ROW, CLEAR_RIGHT, SHOW_CURSOR,
-      "-- move cursor to view a cell. SHIFT moves faster. Esc to exit --";
+      "-- move cursor, SHIFT moves faster. TAB for monsters. Esc to exit --";
+    my $monst = 0;
     while (1) {
         my $loc = $col . ',' . $row;
-        my $s   = distance($col, $row, $pcol, $prow) . ' [' . $loc . '] ';
+        my $s   = '[' . $loc . '] ';
         if (exists $Visible_Cell{$loc}) {
             for my $i (ANIMAL, VEGGIE) {
                 my $x = $LMap[$row][$col][$i];
@@ -1122,16 +1127,44 @@ sub move_examine {
             $s .= '-- negative return on FOV scanner query --';
         }
         print at_row(STATUS_ROW), CLEAR_RIGHT, $s, at(map { MAP_DOFF + $_ } $col, $row);
-        my $key = ReadKey(0);
+        # this would need to be a bit more complicated to support numpad
+        my $key = $command // $Read_Key->(
+            {   "\033" => 1,
+                'q'    => 1,
+                "\011" => 1,
+                'h'    => 1,
+                'j'    => 1,
+                'k'    => 1,
+                'l'    => 1,
+                'y'    => 1,
+                'u'    => 1,
+                'b'    => 1,
+                'n'    => 1,
+                'H'    => 1,
+                'J'    => 1,
+                'K'    => 1,
+                'L'    => 1,
+                'Y'    => 1,
+                'U'    => 1,
+                'B'    => 1,
+                'N'    => 1,
+            }
+        );
         last if $key eq "\033" or $key eq 'q';
-        my $distance = 1;
-        if (ord $key < 97) {    # SHIFT moves faster
-            $key      = lc $key;
-            $distance = 4;
+        undef $command;
+        if ($key eq "\011") {
+            ($col, $row) = $Visible_Monst[ $monst++ ]->@*;
+            $monst %= @Visible_Monst;
+        } else {
+            my $distance = 1;
+            if (ord $key < 97) {    # SHIFT moves faster
+                $key      = lc $key;
+                $distance = 4;
+            }
+            my $dir = $Examine_Offsets{$key};
+            $col = between(0, MAP_COLS - 1, $col + $dir->[PCOL] * $distance);
+            $row = between(0, MAP_ROWS - 1, $row + $dir->[PROW] * $distance);
         }
-        my $dir = $Examine_Offsets{$key} // next;
-        $row = between(0, MAP_ROWS - 1, $row + $dir->[PROW] * $distance);
-        $col = between(0, MAP_COLS - 1, $col + $dir->[PCOL] * $distance);
     }
     print HIDE_CURSOR, at_row(STATUS_ROW), CLEAR_RIGHT;
     log_dim();
@@ -1219,18 +1252,14 @@ sub move_remove {
 sub nope_regarding {
     my ($message, $yes, $no) = @_;
     print AT_MSG_ROW, CLEAR_RIGHT, '/!\ ', $message, ' (Y/N)';
-    my ($key, $ret);
-    while (1) {
-        $key = ReadKey(0);
-        if ($key eq 'Y') {
-            log_message($yes) if defined $yes;
-            $ret = 0;
-            last;
-        } elsif ($key eq "\033" or $key eq 'N' or $key eq 'n') {
-            log_message($no) if defined $no;
-            $ret = 1;
-            last;
-        }
+    my $key = $Read_Key->({ 'Y' => 1, 'N' => 1, 'n' => 1, "\033" => 1 });
+    my $ret;
+    if ($key eq 'Y') {
+        log_message($yes) if defined $yes;
+        $ret = 0;
+    } else {
+        log_message($no) if defined $no;
+        $ret = 1;
     }
     return $ret;
 }
@@ -1340,13 +1369,12 @@ sub plasma_annihilator {
     if (defined $lmc->[ANIMAL]) {
         apply_damage($lmc->[ANIMAL], 'plsplash', $self) if coinflip();
     } elsif ($lmc->[MINERAL][SPECIES] == WALL) {
-        reduce($lmc) if onein(50);
+        reduce($lmc) if onein(40);
         return;
     }
     if (exists $Visible_Cell{$loc}) {
         print at(map { MAP_DOFF + $_ } $col, $row),
           onein(1000) ? $Thingy{ AMULET, }->[DISPLAY] : 'x';
-        $Violent_Sleep_Of_Reason = 1;
     }
 
     with_adjacent(
@@ -1354,7 +1382,7 @@ sub plasma_annihilator {
         sub {
             my ($point) = @_;
             my $adj = join ',', $point->@*;
-            return if $seen->{$adj};
+            return if $seen->{$adj} or !exists $Visible_Cell{$loc};
             push $spread->@*, $point;
             @_ = ($self, $seen, $spread, $depth + 1, $max);
             goto &plasma_annihilator;
@@ -1370,9 +1398,10 @@ sub raycast_fov {
         return;
     }
 
-    my (%blocked, %byrow);
+    my (%blocked, %byrow, %seen);
     my ($cx, $cy) = $Animates[HERO][LMC][WHERE]->@*;
-    %Visible_Cell = ($cx . ',' . $cy => [ $cx, $cy ]);
+    %Visible_Cell  = ($cx . ',' . $cy => [ $cx, $cy ]);
+    @Visible_Monst = ();
 
     # radius 7 points taken from Game:RaycastFOV cache
     for my $ep (
@@ -1397,6 +1426,10 @@ sub raycast_fov {
                 my $loc = $col . ',' . $row;
                 return -1 if exists $blocked{$loc};
 
+                my $point = [ $col, $row ];
+                push @Visible_Monst, $point
+                  if !$seen{$loc}++ and defined $LMap[$row][$col][ANIMAL];
+
                 # walls MUST block, other features may due to the "harsh
                 # environment" (vim on the 2009 MacBook, at the moment).
                 # similar restrictions are applied to monster LOS walks
@@ -1405,7 +1438,7 @@ sub raycast_fov {
                 if ($cell->[SPECIES] == WALL) {
                     $blocked{$loc} = 1;
                     push $byrow{$row}->@*, [ $col, $cell->[DISPLAY] ];
-                    $Visible_Cell{$loc} = [ $col, $row ];
+                    $Visible_Cell{$loc} = $point;
                     return -1;
                 } elsif ($cell->[SPECIES] == RUBBLE) {
                     $blocked{$loc} = 1 if onein(20);
@@ -1441,6 +1474,8 @@ sub raycast_fov {
             $s .= at_col(MAP_DOFF + $ref->[0]) . $ref->[1];
         }
     }
+
+    push @Visible_Monst, [ $cx, $cy ];
 
     # ensure @ is shown as FOV should not touch that cell
     print $FOV =
@@ -1493,6 +1528,26 @@ sub relocate {
       $ani->[DISPLAY];
 }
 
+sub replay {
+    my ($expect) = @_;
+    my $key;
+    local $/ = \1;
+    while (1) {
+        $key = readline $Save_FH;
+        # KLUGE avoid busy-wait on "tail" of an active savegame
+        sleep(0.2);
+        if (!defined $key) {
+        }
+        last    if exists $expect->{$key};
+    }
+    sleep($Replay_Delay);
+    my $esc = ReadKey(-1);
+    # NOTE this could switch input over to the player and start
+    # appending to the savegame file, but that's more work
+    game_over('Escaped!') if defined $esc and $esc eq "\033";
+    return $key;
+}
+
 sub report_position {
     log_message(
         'Transponder reports [' . join(',', $Animates[HERO][LMC][WHERE]->@*) . ']');
@@ -1525,24 +1580,14 @@ sub rubble_delay {
 
 {
     my $energy = '00';
-    my $ec     = 0;
-
-    # when the cost of the last move is no longer the previous move
-    # (failed or otherwise) made, indicate that (now) old information by
-    # drawing it differently
-    sub sb_dim_energy {
-        $ec = 2;
-        print AT_ECOST, "\e[", $ec, 'mt', $energy, TERM_NORM;
-    }
 
     sub sb_update_energy {
         $energy = sprintf "%02d", $Animates[HERO][STASH][ECOST];
-        $ec     = 0;
     }
 
     sub show_status_bar {
         print at_row(STATUS_ROW),
-          sprintf('Level %02d ', $Level), "\e[", $ec, 'mt', $energy, TERM_NORM,
+          sprintf('Level %02d t', $Level), $energy, TERM_NORM,
           display_hitpoints(), display_cellobjs(), display_shieldup();
     }
 }
@@ -1555,9 +1600,9 @@ sub score {
 
 sub update_gameover {
     state $count = 0;
-    raycast_fov(1);
+    raycast_fov(1) if $count == 0;
     tcflush(STDIN_FILENO, TCIFLUSH);
-    my $key = ReadKey(0);
+    my $key = $Read_Key->(\%Key_Commands);
     if ($count == 4) {
         has_lost();
     } elsif ($count >= 2) {
@@ -1576,55 +1621,67 @@ sub update_fungi {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    my ($hits, $cost) =
-      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
     return MOVE_OKAY, $cost if $hits == -1;
 
-    my %seen;
-    my $loc = $mcol . ',' . $mrow;
-    print at(map { MAP_DOFF + $_ } $mcol, $mrow), 'X'
-      if exists $Visible_Cell{$loc};
-    $seen{$loc} = 1;
-
-    my @spread;
-    with_adjacent(
-        $mcol, $mrow,
-        sub {
-            my $loc = join ',', $_[0]->@*;
-            $seen{$loc} = 1;
-            return if irand(10) < 8;
-            print at(map { MAP_DOFF + $_ } $_[0]->@*), 'X'
-              if exists $Visible_Cell{$loc};
-            push @spread, $_[0];
-        }
-    );
-
+    my (@burned, @path);
+    $hits = 0;
     walkcb(
         sub {
             my ($col, $row, $iters) = @_;
             my $lmc = $LMap[$row][$col];
-            my $loc = $col . ',' . $row;
-            $seen{$loc} = 1;
+            push @path, [ $col, $row ];
             if (defined $lmc->[ANIMAL]) {
-                apply_damage($lmc->[ANIMAL], 'plburn', $self, $iters) if coinflip();
-                $Violent_Sleep_Of_Reason = 1 if $lmc->[ANIMAL][SPECIES] == HERO;
+                push @burned, $lmc->[ANIMAL], $iters;
+                $hits = 1 if $lmc->[ANIMAL][SPECIES] == HERO;
             } elsif ($lmc->[MINERAL][SPECIES] == WALL) {
                 reduce($lmc) if onein(20);
                 return -1;
             }
-            if (exists $Visible_Cell{$loc}) {
-                print at(map { MAP_DOFF + $_ } $col, $row), irand($iters) <= 1 ? 'X' : 'x';
-                $Violent_Sleep_Of_Reason = 1;
-            }
-            push @spread, [ $col, $row ];
-            return $iters >= $weap->[W_RANGE] ? -1 : 0;
+            # NOTE distance() and $iters give different numbers for diagonals
+            return $iters > $weap->[W_RANGE] ? -1 : 0;
         },
         $mcol,
         $mrow,
         $tcol,
         $trow
     );
+    return MOVE_OKAY, $cost unless $hits;
 
+    bypair(
+        sub {
+            my ($ani, $iters) = @_;
+            apply_damage($ani, 'plburn', $self, $iters) if coinflip();
+        },
+        @burned
+    );
+
+    my $loc = $mcol . ',' . $mrow;
+    print at(map { MAP_DOFF + $_ } $mcol, $mrow), 'X'
+      if exists $Visible_Cell{$loc};
+    my %seen = ($loc => 1);
+
+    for my $point (@path) {
+        my ($col, $row) = $point->@*;
+        my $loc = $col . ',' . $row;
+        $seen{$loc} = 1;
+        if (exists $Visible_Cell{$loc}) {
+            print at(map { MAP_DOFF + $_ } $col, $row), coinflip() ? 'X' : 'x';
+            $Violent_Sleep_Of_Reason = 1;
+        }
+    }
+
+    my @spread;
+    with_adjacent(
+        $mcol, $mrow,
+        sub {
+            my $loc = join ',', $_[0]->@*;
+            return if $seen{$loc}++ or !exists $Visible_Cell{$loc} or irand(10) < 8;
+            print at(map { MAP_DOFF + $_ } $_[0]->@*), 'X'
+              if exists $Visible_Cell{$loc};
+            push @spread, $_[0];
+        }
+    );
     if (@spread) {
         my $max = 3;
         $max += 2 if onein(40);
@@ -1641,8 +1698,7 @@ sub update_ghast {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    my ($hits, $cost) =
-      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
     return MOVE_OKAY, $cost if $hits == -1;
 
     # but a gatling gun is often trigger happy ...
@@ -1656,7 +1712,7 @@ sub update_ghast {
     my @path;
     linecb(
         sub {
-            my ($col, $row, $iters) = @_;
+            my ($col, $row) = @_;
             push @path, [ $col, $row ];
             if (defined $LMap[$row][$col][ANIMAL]
                 and $LMap[$row][$col][ANIMAL][SPECIES] != HERO) {
@@ -1711,8 +1767,7 @@ sub update_mimic {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    my ($hits, $cost) =
-      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
     return MOVE_OKAY, $cost if $hits == -1;
 
     my @nearby;
@@ -1779,15 +1834,10 @@ sub update_player {
 
     tcflush(STDIN_FILENO, TCIFLUSH);
     while (1) {
-        my $key;
-        while (1) {
-            $key = ReadKey(0);
-            last if exists $Key_Commands{$key};
-        }
+        my $key = $Read_Key->(\%Key_Commands);
         ($ret, $cost, my $code) = $Key_Commands{$key}->($self);
         pkc_log_code($code) if defined $code;
         last                if $ret != MOVE_FAILED;
-        #sb_dim_energy();    # draws too much attention
     }
 
     if (defined $self->[STASH][SHIELDUP]
@@ -1824,8 +1874,7 @@ sub update_troll {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    my ($hits, $cost) =
-      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
     return MOVE_OKAY, $cost if $hits == -1;
 
     my @path;
@@ -1834,7 +1883,7 @@ sub update_troll {
         sub {
             my ($col, $row, $iters) = @_;
             push @path, [ $col, $row ];
-            if ($iters >= $weap->[W_RANGE]) {
+            if ($iters > $weap->[W_RANGE]) {
                 ($tcol, $trow) = ($col, $row) if $hits == 0;
                 return -1;
             }
@@ -1906,8 +1955,7 @@ sub update_stalker {
     my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
     my $weap = $self->[STASH][WEAPON];
 
-    my ($hits, $cost) =
-      does_hit(int sqrt(($tcol - $mcol)**2 + abs($trow - $mrow)**2), $weap);
+    my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
     return MOVE_OKAY, $cost if $hits < 1;
 
     my @path;

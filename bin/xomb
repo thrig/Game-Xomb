@@ -13,12 +13,17 @@ GetOptions(
         warn <<'TLDR';
 Usage: xomb [options]
 
-  --err     - send STDERR to this file if not already redirected
-  --delay   - sleep delay for when player may want to take notice
-  --version - shows xomb version and then quits
+  --err=file     - send STDERR to this file if not already redirected
+  --version      - shows xomb version and then quits
 
-  --seed    - set the game seed to a particular value
-  --today   - set the game seed to YYYYMMDD in the local timezone
+  --seed         - set the game seed to a particular value
+  --today        - set the game seed to YYYYMMDD in the local timezone
+
+  --save=file    - save the seed+keystrokes used to this file
+  --replay=file  - replay from a saved game file
+
+  --delay=f         - delay for when player may want to take notice
+  --replay-delay=f  - delay between moves on replay 
 
 xomb hides STDERR by default to not show warning or error messages;
 debug with a command similar to
@@ -33,6 +38,9 @@ TLDR
     },
     'delay=f'     => \$Game::Xomb::Draw_Delay,
     'err=s'       => \my $err,
+    'replay=s'    => \my $replay,
+    'replay-delay=f' => \$Game::Xomb::Replay_Delay,
+    'save=s'      => \my $save,
     'seed=i'      => \$Game::Xomb::Seed,
     'today|daily' => \my $Flag_Today,
     'version|v'   => sub { say $Game::Xomb::VERSION; exit 1 },
@@ -49,20 +57,36 @@ if (-t STDERR) {
     }
 }
 
-unless (defined $Game::Xomb::Seed) {
-    # a daily seed is a tradition for Brogue
-    if ($Flag_Today) {
-        $Game::Xomb::Seed = strftime "%Y%m%d", localtime;
-    } else {
-        # eh, it's a game
-        # https://flak.tedunangst.com/post/random-in-the-wild
-        $Game::Xomb::Seed = time;
+if (defined $replay) {
+    open $Game::Xomb::Save_FH, '<', $replay or die "could not read '$save': $!\n";
+    my $header = readline $Game::Xomb::Save_FH;
+    chomp $header;
+    $Game::Xomb::Seed = unpack 'L', pack 'L', (split ':', $header, 2)[1];
+    $Game::Xomb::Read_Key = \&Game::Xomb::replay;
+} else {
+    $Game::Xomb::Read_Key = \&Game::Xomb::getkey;
+    unless (defined $Game::Xomb::Seed) {
+        # a daily seed is a tradition for Brogue
+        if ($Flag_Today) {
+            $Game::Xomb::Seed = strftime "%Y%m%d", localtime;
+        } else {
+            # eh, it's a game
+            # https://flak.tedunangst.com/post/random-in-the-wild
+            $Game::Xomb::Seed = time;
+        }
+    }
+    # JSF takes a uint32_t; ensure that the Perl variable matches what JSF
+    # internalizes
+    $Game::Xomb::Seed = unpack 'L', pack 'L', $Game::Xomb::Seed;
+
+    if (defined $save) {
+        open $Game::Xomb::Save_FH, '>', $save or die "could not write to '$save': $!\n";
+        $Game::Xomb::Save_FH->autoflush(1);
+        say $Game::Xomb::Save_FH $Game::Xomb::VERSION . ':' . $Game::Xomb::Seed;
     }
 }
-# JSF takes a uint32_t; ensure that the Perl variable matches what JSF
-# internalizes
-$Game::Xomb::Seed = unpack 'L', pack 'L', $Game::Xomb::Seed;
 
+$0 = 'xomb';
 Game::Xomb::game_loop;
 
 exit(1);    # NOTREACHED
@@ -76,7 +100,9 @@ B<xomb> - a game featuring @ versus the Xarci Bedo
 
 =head1 SYNOPSIS
 
-B<xomb> I<--delay=f> I<--err=file> [ I<--seed=i> | I<--today> ] I<--version>
+B<xomb> I<--delay=f> I<--err=file> I<--save=file> [ I<--seed=i> | I<--today> ] I<--version>
+
+B<xomb> I<--delay=f> I<--err=file> I<--replay=file> B<--replay-delay=f>
 
 =head1 DESCRIPTION
 
@@ -106,6 +132,25 @@ C<0.15> seconds.
 =item I<--err=file>
 
 Send STDERR to this file if not already redirected.
+
+=item I<--replay=file>
+
+Replays a game from I<--save> file output. Causes I<--save> I<--seed>
+and other flags to be ignored.
+
+Hitting escape while replaying a game will stop the replay (and exit
+from the game).
+
+=item I<--replay-delay=seconds>
+
+Floating point value to sleep after a move is replayed. There is also a
+delay if a read of the savegame file comes back undefined; this (poorly)
+supports a tail of an active savegame file.
+
+=item I<--save=file>
+
+Save the keystrokes used (and seed and version information) to the
+given I<file>.
 
 =item I<--seed=i>
 
@@ -197,7 +242,8 @@ Equips an item in the inventory. Does not take energy.
 
 =item C<M>
 
-Show recent messages. Esc or C<q> will exit the submenu. Does not take energy.
+Show recent messages. Esc or C<q> will exit the submenu. Does not
+take energy.
 
 =item C<Q>
 
@@ -227,11 +273,14 @@ these codes.
 Show the game version, seed, and current turn count. Does not
 take energy.
 
-=item C<x>
+=item C<x> C<TAB>
 
 Examine the level map. Esc or C<q> will exit the submenu. Use the
 L</"Motion"> commands to move the cursor. Holding down the shift key
 will move the cursor four times faster. Does not take energy.
+
+C<TAB> will enter examine mode with the cursor placed on some monster.
+Repeat C<TAB> to cycle through the visible monsters.
 
 =back
 
@@ -393,5 +442,7 @@ B<xomb> assumes that the terminal used supports various ANSI or XTerm
 Control Sequences. Given certain time constraints (7DRL 2020) not much
 portability testing has been done. It should work where any suitable
 unix terminal is available.
+
+numpad support only works for motion and not in examine mode.
 
 =cut

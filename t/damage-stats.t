@@ -17,7 +17,7 @@ use Test::Most;
 my $trials = 1000;
 
 my $count     = keys %Game::Xomb::Damage_From;
-my $testcount = $count * 3 + 3;
+my $testcount = $count * 3 + 9;
 
 plan tests => $testcount;
 
@@ -43,7 +43,7 @@ SKIP: {
 
         my $fn = $Game::Xomb::Damage_From{$name};
         if ($name eq 'plburn') {
-            tally($fn, "$name$_", $_) for 1 .. 3;
+            tally($fn, "$name$_", $_) for 1 .. 5;
         } else {
             tally($fn, $name, $args{$name}->@*);
         }
