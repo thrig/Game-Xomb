@@ -7,7 +7,7 @@ use warnings;
 use Game::Xomb;
 use Test::Most;
 
-plan tests => 18;
+plan tests => 27;
 
 my $deeply = \&eq_or_diff;
 
@@ -59,26 +59,41 @@ is Game::Xomb::between(1, 6, 9),  6;
 
 # do the amulet checks work? pretty important.
 {
-    Game::Xomb::make_player();
-    ok !Game::Xomb::has_amulet();
-    my $ammie = (Game::Xomb::make_amulet())[0];
+    Game::Xomb::make_player;
+    ok !Game::Xomb::has_amulet;
+    my $ammie = (Game::Xomb::make_amulet)[0];
 
     is Game::Xomb::veggie_name($ammie), '(1000) Dragonstone';
 
     my $stash = $Game::Xomb::Animates[Game::Xomb::HERO][Game::Xomb::STASH];
     my $loot  = $stash->[Game::Xomb::LOOT];
-    push $loot->@*, $ammie;
-    ok Game::Xomb::has_amulet();
-
-    is Game::Xomb::loot_value(), Game::Xomb::AMULET_VALUE;
-
-    # darn use_item has side-effects
-    #Game::Xomb::use_item($loot, 0, $stash);
-    $stash->[Game::Xomb::SHIELDUP] = splice $loot->@*, 0, 1;
     is scalar $loot->@*, 0;
-    ok Game::Xomb::has_amulet();
 
-    is Game::Xomb::loot_value(), Game::Xomb::AMULET_VALUE;
+    push $loot->@*, $ammie;
+    ok Game::Xomb::has_amulet;
+
+    is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE;
+
+    ok Game::Xomb::use_item($loot, 0, $stash);
+    is scalar $loot->@*, 0;
+    ok Game::Xomb::has_amulet;
+    is $stash->[Game::Xomb::SHIELDUP][Game::Xomb::SPECIES], Game::Xomb::AMULET;
+
+    # loot value must be the same even when Amulet being used to
+    # recharge the shield (unless the shield is regenerating...)
+    is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE;
+
+    my ($gem, $gemv) = Game::Xomb::make_gem;
+    ok $gemv > 0;
+
+    push $loot->@*, $gem;
+    is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE + $gemv;
+
+    # swap gem for amulet
+    ok Game::Xomb::use_item($loot, 0, $stash);
+    is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE + $gemv;
+    is scalar $loot->@*, 1;
+    is $stash->[Game::Xomb::SHIELDUP][Game::Xomb::SPECIES], Game::Xomb::GEM;
 }
 
 {

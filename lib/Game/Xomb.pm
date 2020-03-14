@@ -31,7 +31,7 @@ sub CLEAR_LINE ()   { "\e[2K" }
 sub CLEAR_RIGHT ()  { "\e[K" }
 sub CLEAR_SCREEN () { "\e[1;1H\e[2J" }
 sub HIDE_CURSOR ()  { "\e[?25l" }        # this gets toggled on/off
-sub HIDE_POINTER () { "\e[>3p" }         # remove screen gnat
+sub HIDE_POINTER () { "\e[>2p" }         # hide screen gnat
 sub SHOW_CURSOR ()  { "\e[?25h" }
 sub TERM_NORM ()    { "\e[m" }
 sub UNALT_SCREEN () { "\e[?1049l" }
@@ -1012,7 +1012,7 @@ sub manage_inventory {
                 last CMD if $use eq "\033" or $use eq 'q';
                 my $i = ord($use) - 65;
                 if ($i < $loot->@*) {
-                    use_item($loot, $i, $Animates[HERO][STASH]);
+                    use_item($loot, $i, $Animates[HERO][STASH]) and print display_shieldup();
                     last CMD;
                 }
             }
@@ -2037,14 +2037,14 @@ sub use_item {
     my ($loot, $i, $stash) = @_;
     if (!($loot->[$i][SPECIES] == GEM or $loot->[$i][SPECIES] == AMULET)) {
         pkc_log_code('0111');
-        return;
+        return 0;
     }
     if (defined $stash->[SHIELDUP]) {
         ($stash->[SHIELDUP], $loot->[$i]) = ($loot->[$i], $stash->[SHIELDUP]);
     } else {
         $stash->[SHIELDUP] = splice $loot->@*, $i, 1;
     }
-    print display_shieldup();
+    return 1;
 }
 
 sub veggie_name {
