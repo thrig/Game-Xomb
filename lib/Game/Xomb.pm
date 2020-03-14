@@ -5,7 +5,7 @@
 
 package Game::Xomb;
 
-our $VERSION = '1.01';
+our $VERSION = '1.02';
 
 use 5.24.0;
 use warnings;
@@ -148,6 +148,7 @@ our @LMap;        # level map. array of array of array of ...
 our $Draw_Delay   = 0.15;
 our $Energy_Spent = 0;
 our $Level        = 1;      # current level
+our $Level_Max    = 1;
 our $RKFN;                  # function handling key reads
 our $Replay_Delay = 0.2;
 our $Replay_FH;
@@ -375,7 +376,9 @@ sub apply_damage {
             $ani->[DISPLAY] = '&';                 # the @ got unravelled
             $ani->[UPDATE]  = \&update_gameover;
         } else {
-            log_message($Descript{ $ani->[SPECIES] } . ' destroyed.');
+            log_message($Descript{ $ani->[SPECIES] }
+                  . ' destroyed by '
+                  . $Descript{ $rest[0]->[SPECIES] });
             $ani->[BLACK_SPOT] = 1;
             undef $ani->[LMC][ANIMAL];
         }
@@ -520,14 +523,16 @@ sub game_loop {
         }
         if ($new_level != 0) {
             $Level += $new_level;
+            $Level_Max = max($Level, $Level_Max);
             has_won() if $Level <= 0;
-            generate_map();
+            my $ammie = (generate_map())[0];
             $Violent_Sleep_Of_Reason = 1;
             # NOTE other half of this is applied in the Bump-into-HOLE
             # logic, elsewhere. this last half happens here as the new
             # level is not yet available prior to the fall
             apply_passives($Animates[HERO], $Animates[HERO][STASH][ECOST] / 2, 1);
             show_status_bar();
+            log_message('Proximal ' . AMULET_NAME . ' readings detected.') if $ammie;
             next GLOOP;
         }
         @Animates = grep { !$_->[BLACK_SPOT] } @Animates;
@@ -603,13 +608,14 @@ sub generate_map {
         bail_out("Conditions on Minos III proved too harsh.") unless @seeds;
     }
 
+    my $put_ammie = 0;
     if (exists $Level_Features[$findex]{ AMULET, } and !$has_ammie) {
         my $gem   = (make_amulet())[0];
         my $point = extract(\@seeds);
         ($col, $row) = $point->@[ PCOL, PROW ];
         push @goodp, $point;
         $LMap[$row][$col][VEGGIE] = $gem;
-        log_message('Proximal ' . AMULET_NAME . ' readings detected.');
+        $put_ammie = 1;
     }
 
     # gems no longer generate during the climb out
@@ -690,7 +696,7 @@ sub generate_map {
         pathable($col, $row, $herop);
     }
 
-    return scalar(@seeds), $camping;
+    return $put_ammie, $gcount, scalar(@seeds), $camping;
 }
 
 sub getkey {
@@ -815,34 +821,6 @@ sub init_map {
     }
 }
 
-# mostly for FOV and level design playtesting to see what the various
-# t/maps/* files look like. could be extended to load pre-made levels
-# easily enough
-sub load_map {
-    my ($mapf) = @_;
-    open my $fh, '<', $mapf or bail_out("could not open '$mapf': $!\n");
-
-    my %charid = map { $Thingy{$_}->[DISPLAY] => $_ } keys %Thingy;
-
-    while (my $line = readline $fh) {
-        chomp $line;
-        my $len = length $line;
-        bail_out("$mapf:$. wrong number columns $len\n") if $len != MAP_COLS;
-        my $colnum = 0;
-        for my $ch (split //, $line) {
-            my $id = $charid{$ch}
-              // bail_out("$mapf:$. unknown character $ch at index $colnum\n");
-            my $point = [ $colnum++, $. - 1 ];
-            if ($Thingy{$id}->[GENUS] == MINERAL) {
-                push $LMap[ $. - 1 ]->@*, [ $point, $Thingy{$id} ];
-            } else {
-                bail_out("This section of Minos III is still under construction.\n");
-            }
-        }
-    }
-    bail_out("$mapf:$. incorrect row count\n") if $. != MAP_ROWS;
-}
-
 {
     my $lc  = 1;
     my @log = ('Welcome to Xomb.');
@@ -875,14 +853,10 @@ sub load_map {
 }
 
 sub loot_value {
-    my ($won) = @_;
-    my $value = $won ? 1000 : 0;
+    my $value = 0;
     for my $item ($Animates[HERO][STASH][LOOT]->@*) {
-        if ($item->[SPECIES] == AMULET) {
-            $value += 1000;
-        } elsif ($item->[SPECIES] == GEM) {
-            $value += $item->[STASH][GEM_VALUE];
-        }
+        # AMULET considered as gem as they might have burned it up a bit
+        $value += $item->[STASH][GEM_VALUE];
     }
     # they probably won't need to charge their shield after the game
     # is over?
@@ -1648,7 +1622,7 @@ sub rubble_delay {
 
 sub score {
     my ($won) = @_;
-    my $score = loot_value($won);
+    my $score = loot_value() + ($won ? 10000 : 0) + 10 * int exp $Level_Max;
     return "Score: $score in $Turn_Count turns (v$VERSION:$Seed)";
 }
 

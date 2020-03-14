@@ -1,5 +1,12 @@
 Revision history for Game::Xomb
 
+1.02    ????
+    * remove unused load_map()
+    * report Amulet proximity after any environmental effects
+    * rework scoring function to use exact AMULET value, more points for
+      visiting deeper levels, more points if actually win
+    * tests of more of the code, and fix various broken tests
+
 1.01    2020-03-14 03:25 UTC
     * switch RNG to Jenkins Small Fast -- "A small noncryptographic PRNG"
     * save keystrokes to file and support replay from that
