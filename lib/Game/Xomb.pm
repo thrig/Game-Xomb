@@ -14,9 +14,13 @@ use List::UtilsBy qw(min_by nsort_by);
 use POSIX qw(STDIN_FILENO TCIFLUSH tcflush);
 use Scalar::Util qw(weaken);
 use Term::ReadKey qw(GetTerminalSize ReadKey ReadMode);
-use Time::HiRes qw(ualarm sleep);
+use Time::HiRes qw(sleep);
 require XSLoader;
 XSLoader::load('Game::Xomb', $VERSION);    # distance, line drawing, RNG
+
+########################################################################
+#
+# CONSTANTS
 
 sub NEED_ROWS () { 24 }
 sub NEED_COLS () { 80 }
@@ -26,8 +30,8 @@ sub ALT_SCREEN ()   { "\e[?1049h" }
 sub CLEAR_LINE ()   { "\e[2K" }
 sub CLEAR_RIGHT ()  { "\e[K" }
 sub CLEAR_SCREEN () { "\e[1;1H\e[2J" }
-sub HIDE_CURSOR ()  { "\e[?25l" }          # this gets toggled on/off
-sub HIDE_POINTER () { "\e[>3p" }           # remove screen gnat
+sub HIDE_CURSOR ()  { "\e[?25l" }        # this gets toggled on/off
+sub HIDE_POINTER () { "\e[>3p" }         # remove screen gnat
 sub SHOW_CURSOR ()  { "\e[?25h" }
 sub TERM_NORM ()    { "\e[m" }
 sub UNALT_SCREEN () { "\e[?1049l" }
@@ -130,22 +134,31 @@ sub DEFAULT_COST () { 10 }
 sub DIAG_COST ()    { 14 }
 sub NLVL_COST ()    { 15 }    # time to gate to next level
 
+sub RUN_MAX () { 4 }
+
+########################################################################
+#
+# VARIABLES
+
 our $Violent_Sleep_Of_Reason = 0;
 
-our @Animates;                # things with energy, HERO always in first slot
-our @LMap;                    # level map. array of array of array of ...
+our @Animates;    # things with energy, HERO always in first slot
+our @LMap;        # level map. array of array of array of ...
 
 our $Draw_Delay   = 0.15;
 our $Energy_Spent = 0;
-our $Level        = 1;        # current level
-our $Read_Key;
-our $Replay_Delay;
+our $Level        = 1;      # current level
+our $RKFN;                  # function handling key reads
+our $Replay_Delay = 0.2;
+our $Replay_FH;
 our $Save_FH;
-our $Seed;
-our $Turn_Count = 0;          # player moves
-our %Visible_Cell;            # x,y => [x,y] of cells visible in FOV
-our @Visible_Monst;
-our %Warned_About;            # limit annoying messages
+our $Seed;                  # cached value, jsf.c internalizes this
+our $Sticky;                # for runner/running support
+our $Sticky_Max = 0;
+our $Turn_Count = 0;
+our %Visible_Cell;          # x,y => [x,y] of cells visible in FOV
+our @Visible_Monst;         # [x,y] of visible monsters
+our %Warned_About;          # limit annoying messages
 
 our %Damage_From = (
     acidburn => sub {
@@ -194,7 +207,7 @@ our %Damage_From = (
     # pretty sure this is only fungus friendly fire
     plsplash => sub { roll(2, 8) },
 
-    # listed here for easy access but get called to through 'attackby'.
+    # listed here for reference but get called to through 'attackby'.
     GHAST,
     sub { roll(3, 2) - 1 },
     HERO,
@@ -256,62 +269,6 @@ our %Descript = (
     TROLL,  'Railgun Tower',   WALL,    'wall',
 );
 
-# what happens when moving into the given GENUS via move_animate
-our %Bump_Into = (
-    ANIMAL,
-    sub {
-        my ($mover, $dpoint, $target, $cost) = @_;
-        # NOTE only for the player, none of the monsters move
-        if (irand(100) < 90) {
-            apply_damage($target, 'attackby', $mover);
-        } else {
-            pkc_log_code('0302') if $mover->[SPECIES] == HERO;
-        }
-        $cost += rubble_delay($mover, $cost)
-          if $mover->[LMC][MINERAL][SPECIES] == RUBBLE;
-        apply_passives($mover, $cost, 0);
-        return MOVE_OKAY, $cost;
-    },
-    MINERAL,
-    sub {
-        my ($mover, $dpoint, $target, $cost) = @_;
-        return MOVE_FAILED, 0, '0002' if $target->[SPECIES] == WALL;
-        # NOTE the rubble delay is applied *before* they can move out of
-        # that acid pond that they are in:
-        #   "Yes, we really hate players, damn their guts."
-        #     -- Dungeon Crawl Stone Soup, cloud.cc
-        $cost += rubble_delay($mover, $cost) if $target->[SPECIES] == RUBBLE;
-        if ($target->[SPECIES] == HOLE) {
-            if ($mover->[SPECIES] == HERO) {
-                return MOVE_FAILED, 0
-                  if nope_regarding('Falling may cause damage', undef,
-                    'You decide against it.');
-            }
-            apply_passives($mover, $cost / 2, 0);
-            my $ret = MOVE_OKAY;
-            if ($mover->[SPECIES] == HERO) {
-                log_message('You plunge into the crevasse.');
-                relocate($mover, $dpoint);
-                pkc_log_code('0099');
-                $ret = MOVE_LVLDOWN;
-            } else {
-                # no moving monsters (yet), just kill them off for now
-                $mover->[BLACK_SPOT] = 1;
-                undef $mover->[LMC][ANIMAL];
-            }
-            my $src;
-            $src->[SPECIES] = FLOOR;
-            apply_damage($mover, 'falling', $src);
-            return $ret, $cost;
-        } else {
-            apply_passives($mover, $cost / 2, 0);
-            relocate($mover, $dpoint);
-            apply_passives($mover, $cost / 2, 1);
-            return MOVE_OKAY, $cost;
-        }
-    },
-);
-
 # for looking around with, see move_examine
 our %Examine_Offsets = (
     'h' => [ -1, +0 ],
@@ -362,6 +319,19 @@ our %Key_Commands = (
 # weak effort at numpad support
 @Key_Commands{qw/1 2 3 4 5 6 7 8 9/} = @Key_Commands{qw/b j n h . l y k u/};
 
+# limited duration run because the raycast does not stop for unseen gems
+# or gates that the player may wish to take note of
+$Key_Commands{'H'} = move_player_runner('h', RUN_MAX);
+$Key_Commands{'J'} = move_player_runner('j', RUN_MAX);
+$Key_Commands{'K'} = move_player_runner('k', RUN_MAX);
+$Key_Commands{'L'} = move_player_runner('l', RUN_MAX);
+$Key_Commands{'Y'} = move_player_runner('y', RUN_MAX);
+$Key_Commands{'U'} = move_player_runner('u', RUN_MAX);
+$Key_Commands{'B'} = move_player_runner('b', RUN_MAX);
+$Key_Commands{'N'} = move_player_runner('n', RUN_MAX);
+
+$Key_Commands{'S'} = move_player_snooze('.');
+
 my @Level_Features = (
     {   ACID, 50, GATE, 2, HOLE, 200, RUBBLE, 400, WALL, 100,
         xarci => [ GHAST, GHAST, MIMIC ],
@@ -379,6 +349,21 @@ my @Level_Features = (
         xarci => [ GHAST, STALKER, STALKER, TROLL, TROLL ],
     },
 );
+
+########################################################################
+#
+# SUBROUTINES
+
+sub abort_run {
+    my ($col, $row, $dcol, $drow) = @_;
+    return 1
+      if defined $LMap[$row][$col][VEGGIE]
+      or defined $LMap[$drow][$dcol][ANIMAL]
+      or $LMap[$row][$col][MINERAL][SPECIES] == GATE;
+    my $dftype = $LMap[$drow][$dcol][MINERAL][SPECIES];
+    return 1 unless $dftype == FLOOR or $dftype == GATE;
+    return 0;
+}
 
 sub apply_damage {
     my ($ani, $cause, @rest) = @_;
@@ -400,7 +385,10 @@ sub apply_damage {
               . ' damage to '
               . $Descript{ $ani->[SPECIES] });
     }
-    print display_hitpoints() if $ani->[SPECIES] == HERO;
+    if ($ani->[SPECIES] == HERO) {
+        undef $Sticky;
+        print display_hitpoints();
+    }
 }
 
 sub apply_passives {
@@ -411,7 +399,7 @@ sub apply_passives {
     }
 }
 
-sub await_quit { $Read_Key->({ "\033" => 1, 'q' => 1 }) }
+sub await_quit { $RKFN->({ "\033" => 1, 'q' => 1 }) }
 
 sub bad_terminal {
     return 0 unless -t *STDOUT;
@@ -559,7 +547,7 @@ sub generate_map {
     my $has_ammie = has_amulet();
 
     my $herop = $Animates[HERO][LMC][WHERE];
-    my ($col, $row) = $herop->@*;
+    my ($col, $row) = $herop->@[ PCOL, PROW ];
 
     # reset to bare ground plus some white noise seed points
     my @seeds;
@@ -590,7 +578,7 @@ sub generate_map {
             my $goal = max($want, min(20, int($want / 10)));
             my $seed = extract(\@seeds);
             $want -= place_floortype(
-                $seed->@*,
+                $seed->@[ PCOL, PROW ],
                 $floor, $goal, 60,
                 [   [ -1, 0 ], [ -1, 1 ], [ 0,  -1 ], [ 0, 1 ],  [ 1, -1 ], [ 1, 0 ],
                     [ 1,  1 ], [ -2, 0 ], [ -2, 2 ],  [ 0, -2 ], [ 0, 2 ],  [ 2, -2 ],
@@ -608,7 +596,7 @@ sub generate_map {
 
     for (1 .. $Level_Features[$findex]{ GATE, }) {
         my $point = extract(\@seeds);
-        ($col, $row) = $point->@*;
+        ($col, $row) = $point->@[ PCOL, PROW ];
         push @goodp, $point;
         $LMap[$row][$col][MINERAL] = $Thingy{ GATE, };
         bail_out("Conditions on Minos III proved too harsh.") unless @seeds;
@@ -617,7 +605,7 @@ sub generate_map {
     if (exists $Level_Features[$findex]{ AMULET, } and !$has_ammie) {
         my $gem   = (make_amulet())[0];
         my $point = extract(\@seeds);
-        ($col, $row) = $point->@*;
+        ($col, $row) = $point->@[ PCOL, PROW ];
         push @goodp, $point;
         $LMap[$row][$col][VEGGIE] = $gem;
         log_message('Proximal ' . AMULET_NAME . ' readings detected.');
@@ -630,7 +618,7 @@ sub generate_map {
     while (!$has_ammie) {
         my ($gem, $value) = make_gem();
         my $point = extract(\@seeds);
-        ($col, $row) = $point->@*;
+        ($col, $row) = $point->@[ PCOL, PROW ];
         push @goodp, $point;
         $LMap[$row][$col][VEGGIE] = $gem;
         # influences max score and how much shield repair is possible
@@ -642,7 +630,7 @@ sub generate_map {
     # pick a point and ensure that there is a walkable path between all
     # of the good points and that (mostly) hidden point. this provides
     # some hints on the final level due to the lack of rubble there
-    ($col, $row) = extract(\@seeds)->@*;
+    ($col, $row) = extract(\@seeds)->@[ PCOL, PROW ];
     $LMap[$row][$col][MINERAL] = $Thingy{ onein(10) ? RUBBLE : FLOOR };
     pathable($col, $row, $herop, @goodp);
     reify(
@@ -674,7 +662,7 @@ sub generate_map {
         push @free, ($gp) x 7
           unless defined $LMap[ $gp->[PROW] ][ $gp->[PCOL] ][ANIMAL];
         with_adjacent(
-            $gp->@*,
+            $gp->@[ PCOL, PROW ],
             sub {
                 my ($adj) = @_;
                 push @free, $adj unless defined $LMap[ $adj->[PROW] ][ $adj->[PCOL] ][ANIMAL];
@@ -690,11 +678,12 @@ sub generate_map {
         my $mindist = 2 + roll(3, 2);
         my $gem     = (make_gem())[0];
         my $point   = min_by sub {
-            my $d = distance($Animates[HERO][LMC][WHERE]->@*, $_->@*);
+            my $d =
+              distance($Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ], $_->@[ PCOL, PROW ]);
             $d < $mindist ? ~0 : $d;
         }, @seeds;
         # ... and that they can actually get to said gem
-        ($col, $row) = $point->@*;
+        ($col, $row) = $point->@[ PCOL, PROW ];
         $LMap[$row][$col][VEGGIE]  = $gem;
         $LMap[$row][$col][MINERAL] = $Thingy{ onein(10) ? RUBBLE : FLOOR };
         pathable($col, $row, $herop);
@@ -769,6 +758,7 @@ sub help_screen {
     p - clear PKC code    C-l - redraw screen    R - remove a gem
     ? - show help         v   - show version     d - drop a gem
     @ - show location     Q   - quit the game  TAB - examine monster
+    S - snooze until healed     HJKLYUBN run in that direction
 
     Esc or q will exit from sub-displays such as this one. Prompts
     must be answered with Y to carry out the action; N or n or Esc
@@ -1012,8 +1002,7 @@ sub manage_inventory {
 
     my %choices = ("\033" => 1, 'q' => 1);
   CMD: while (1) {
-        my $key = $command
-          // $Read_Key->({ "\033" => 1, 'q' => 1, 'd' => 1, 'E' => 1 });
+        my $key = $command // $RKFN->({ "\033" => 1, 'q' => 1, 'd' => 1, 'E' => 1 });
         last if $key eq "\033" or $key eq 'q';
         undef $command;
         next unless $has_loot;
@@ -1028,7 +1017,7 @@ sub manage_inventory {
             }
             while (1) {
                 @choices{ map { chr 65 + $_ } 0 .. $loot->$#* } = ();
-                my $drop = $Read_Key->(\%choices);
+                my $drop = $RKFN->(\%choices);
                 last CMD if $drop eq "\033" or $drop eq 'q';
                 my $i = ord($drop) - 65;
                 if ($i < $loot->@*) {
@@ -1044,7 +1033,7 @@ sub manage_inventory {
             }
             while (1) {
                 @choices{ map { chr 65 + $_ } 0 .. $loot->$#* } = ();
-                my $use = $Read_Key->(\%choices);
+                my $use = $RKFN->(\%choices);
                 last CMD if $use eq "\033" or $use eq 'q';
                 my $i = ord($use) - 65;
                 if ($i < $loot->@*) {
@@ -1060,25 +1049,63 @@ sub manage_inventory {
     return MOVE_FAILED, 0;
 }
 
+# only the player can move in this game so this is not as generic as it
+# should be
 sub move_animate {
     my ($ani, $cols, $rows, $cost) = @_;
     my $lmc  = $ani->[LMC];
     my $dcol = $lmc->[WHERE][PCOL] + $cols;
     my $drow = $lmc->[WHERE][PROW] + $rows;
-    return MOVE_FAILED, 0, '0001'
-      if $dcol < 0
-      or $dcol >= MAP_COLS
-      or $drow < 0
-      or $drow >= MAP_ROWS;
-    # NOTE vegetables are never considered when moving into a cell as
-    # otherwise veggies in rubble never allow the rubble passive
-    # effect to fire
-    for my $i (ANIMAL, MINERAL) {
-        my $target = $LMap[$drow][$dcol][$i];
-        if (defined $target) {
-            @_ = ($ani, [ $dcol, $drow ], $target, $cost);
-            goto $Bump_Into{ $target->[GENUS] }->&*;
+    if (   $dcol < 0
+        or $dcol >= MAP_COLS
+        or $drow < 0
+        or $drow >= MAP_ROWS) {
+        undef $Sticky;
+        return MOVE_FAILED, 0, '0001';
+    }
+    if (defined $Sticky) {
+        if (@Visible_Monst or abort_run($lmc->[WHERE]->@[ PCOL, PROW ], $dcol, $drow)) {
+            undef $Sticky;
+            return MOVE_FAILED, 0, '0065';
         }
+    }
+    # Bump combat, as is traditional
+    my $target = $LMap[$drow][$dcol][ANIMAL];
+    if (defined $target) {
+        if (irand(100) < 90) {
+            apply_damage($target, 'attackby', $ani);
+        } else {
+            pkc_log_code('0302');
+        }
+        $cost += rubble_delay($ani, $cost) if $lmc->[MINERAL][SPECIES] == RUBBLE;
+        apply_passives($ani, $cost, 0);
+        return MOVE_OKAY, $cost;
+    }
+    $target = $LMap[$drow][$dcol][MINERAL];
+    return MOVE_FAILED, 0, '0002' if $target->[SPECIES] == WALL;
+    # NOTE the rubble delay is applied *before* they can move out of
+    # that acid pond that they are in:
+    #   "Yes, we really hate players, damn their guts."
+    #     -- Dungeon Crawl Stone Soup, cloud.cc
+    $cost += rubble_delay($ani, $cost) if $target->[SPECIES] == RUBBLE;
+    if ($target->[SPECIES] == HOLE) {
+        return MOVE_FAILED, 0
+          if nope_regarding('Falling may cause damage', undef,
+            'You decide against it.');
+        apply_passives($ani, $cost / 2, 0);
+        log_message('You plunge down into the crevasse.');
+        relocate($ani, $dcol, $drow);
+        pkc_log_code('0099');
+        # KLUGE fake the source of damage as from the floor
+        my $src;
+        $src->[SPECIES] = FLOOR;
+        apply_damage($ani, 'falling', $src);
+        return MOVE_LVLDOWN, $cost;
+    } else {
+        apply_passives($ani, $cost / 2, 0);
+        relocate($ani, $dcol, $drow);
+        apply_passives($ani, $cost / 2, 1);
+        return MOVE_OKAY, $cost;
     }
 }
 
@@ -1100,8 +1127,7 @@ sub move_equip {
 
 sub move_examine {
     my ($command) = @_;
-    my $row       = $Animates[HERO][LMC][WHERE][PROW];
-    my $col       = $Animates[HERO][LMC][WHERE][PCOL];
+    my ($col,  $row)  = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my ($pcol, $prow) = ($col, $row);
     print AT_MSG_ROW, CLEAR_RIGHT, SHOW_CURSOR,
       "-- move cursor, SHIFT moves faster. TAB for monsters. Esc to exit --";
@@ -1128,7 +1154,7 @@ sub move_examine {
         }
         print at_row(STATUS_ROW), CLEAR_RIGHT, $s, at(map { MAP_DOFF + $_ } $col, $row);
         # this would need to be a bit more complicated to support numpad
-        my $key = $command // $Read_Key->(
+        my $key = $command // $RKFN->(
             {   "\033" => 1,
                 'q'    => 1,
                 "\011" => 1,
@@ -1153,13 +1179,13 @@ sub move_examine {
         last if $key eq "\033" or $key eq 'q';
         undef $command;
         if ($key eq "\011") {
-            ($col, $row) = $Visible_Monst[ $monst++ ]->@*;
+            ($col, $row) = $Visible_Monst[ $monst++ ]->@[ PCOL, PROW ];
             $monst %= @Visible_Monst;
         } else {
             my $distance = 1;
             if (ord $key < 97) {    # SHIFT moves faster
                 $key      = lc $key;
-                $distance = 4;
+                $distance = RUN_MAX;
             }
             my $dir = $Examine_Offsets{$key};
             $col = between(0, MAP_COLS - 1, $col + $dir->[PCOL] * $distance);
@@ -1198,6 +1224,11 @@ sub move_gate_up {
 }
 
 sub move_nop {
+    if (defined $Sticky
+        and (@Visible_Monst or $Animates[HERO][LMC][MINERAL][SPECIES] == ACID)) {
+        undef $Sticky;
+        return MOVE_FAILED, 0;
+    }
     apply_passives($Animates[HERO], DEFAULT_COST, 0);
     # NOTE constant amount of time even if they idle in rubble
     return MOVE_OKAY, DEFAULT_COST;
@@ -1232,6 +1263,26 @@ sub move_player_maker {
     }
 }
 
+sub move_player_runner {
+    my ($key, $count) = @_;
+    sub {
+        $Sticky     = $key;
+        $Sticky_Max = $count;
+        goto $Key_Commands{$key}->&*;
+    }
+}
+
+sub move_player_snooze {
+    my ($key) = @_;
+    sub {
+        # no long snooze unless something to charge from
+        return MOVE_FAILED, 0, '0063' unless defined $Animates[HERO][STASH][SHIELDUP];
+        $Sticky     = $key;
+        $Sticky_Max = START_HP * 5;
+        goto $Key_Commands{$key}->&*;
+    }
+}
+
 sub move_quit {
     return MOVE_FAILED, 0
       if nope_regarding('Really quit game?', undef, 'You decide against it.');
@@ -1252,7 +1303,7 @@ sub move_remove {
 sub nope_regarding {
     my ($message, $yes, $no) = @_;
     print AT_MSG_ROW, CLEAR_RIGHT, '/!\ ', $message, ' (Y/N)';
-    my $key = $Read_Key->({ 'Y' => 1, 'N' => 1, 'n' => 1, "\033" => 1 });
+    my $key = $RKFN->({ 'Y' => 1, 'N' => 1, 'n' => 1, "\033" => 1 });
     my $ret;
     if ($key eq 'Y') {
         log_message($yes) if defined $yes;
@@ -1298,7 +1349,7 @@ sub pathable {
             },
             $col,
             $row,
-            $point->@*
+            $point->@[ PCOL, PROW ]
         );
     }
 }
@@ -1311,7 +1362,7 @@ sub place_floortype {
     my ($col, $row, $species, $count, $odds, $offsets, $used) = @_;
     my $placed = 0;
     while ($count-- > 0) {
-        my ($ncol, $nrow) = pick($offsets)->@*;
+        my ($ncol, $nrow) = pick($offsets)->@[ PCOL, PROW ];
         $ncol += $col;
         $nrow += $row;
         next
@@ -1337,7 +1388,7 @@ sub place_monster {
     my ($species, $energy, $seeds) = @_;
 
     my $point = extract($seeds);
-    my ($col, $row) = $point->@*;
+    my ($col, $row) = $point->@[ PCOL, PROW ];
 
     my $monst = make_monster(
         species => pick($species),
@@ -1361,7 +1412,7 @@ sub plasma_annihilator {
 
     return if $depth >= $max or !$spread->@*;
 
-    my ($col, $row) = pick($spread)->@*;
+    my ($col, $row) = pick($spread)->@[ PCOL, PROW ];
     my $loc = $col . ',' . $row;
     $seen->{$loc} = 1;
 
@@ -1381,7 +1432,7 @@ sub plasma_annihilator {
         $col, $row,
         sub {
             my ($point) = @_;
-            my $adj = join ',', $point->@*;
+            my $adj = join ',', $point->@[ PCOL, PROW ];
             return if $seen->{$adj} or !exists $Visible_Cell{$loc};
             push $spread->@*, $point;
             @_ = ($self, $seen, $spread, $depth + 1, $max);
@@ -1399,7 +1450,7 @@ sub raycast_fov {
     }
 
     my (%blocked, %byrow, %seen);
-    my ($cx, $cy) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($cx, $cy) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     %Visible_Cell  = ($cx . ',' . $cy => [ $cx, $cy ]);
     @Visible_Monst = ();
 
@@ -1475,8 +1526,6 @@ sub raycast_fov {
         }
     }
 
-    push @Visible_Monst, [ $cx, $cy ];
-
     # ensure @ is shown as FOV should not touch that cell
     print $FOV =
       $s . at(map { MAP_DOFF + $_ } $cx, $cy) . $LMap[$cy][$cx][ANIMAL][DISPLAY];
@@ -1484,7 +1533,7 @@ sub raycast_fov {
 
 sub reduce {
     my ($lmc) = @_;
-    if (exists $Visible_Cell{ join ',', $lmc->[WHERE]->@* }) {
+    if (exists $Visible_Cell{ join ',', $lmc->[WHERE]->@[ PCOL, PROW ] }) {
         log_message('A '
               . $Descript{ $lmc->[MINERAL][SPECIES] }
               . ' explodes in a shower of fragments!');
@@ -1510,12 +1559,12 @@ sub reify {
 }
 
 sub relocate {
-    my ($ani, $dpoint) = @_;
+    my ($ani, $col, $row) = @_;
     my $lmc = $ani->[LMC];
 
     my $src = $lmc->[WHERE];
 
-    my $dest_lmc = $LMap[ $dpoint->[PROW] ][ $dpoint->[PCOL] ];
+    my $dest_lmc = $LMap[$row][$col];
     $dest_lmc->[ANIMAL] = $ani;
     undef $LMap[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
 
@@ -1523,32 +1572,38 @@ sub relocate {
     weaken $ani->[LMC];
 
     my $cell = $lmc->[VEGGIE] // $lmc->[MINERAL];
-    print at(map { MAP_DOFF + $_ } $src->@*), $cell->[DISPLAY],
-      at(map { MAP_DOFF + $_ } $dpoint->@*),
+    print at(map { MAP_DOFF + $_ } $src->@[ PCOL, PROW ]), $cell->[DISPLAY],
+      at(map { MAP_DOFF + $_ } $col, $row),
       $ani->[DISPLAY];
 }
 
 sub replay {
     my ($expect) = @_;
     my $key;
+    sleep($Replay_Delay);
     local $/ = \1;
     while (1) {
-        $key = readline $Save_FH;
-        # KLUGE avoid busy-wait on "tail" of an active savegame
-        sleep(0.2) unless defined $key;
-        last if exists $expect->{$key};
+        my $esc = ReadKey(-1);
+        if (defined $esc and $esc eq "\033") {
+            $RKFN = \&Game::Xomb::getkey;
+            goto &Game::Xomb::getkey;
+        }
+        $key = readline $Replay_FH;
+        if (defined $key) {
+            last if exists $expect->{$key};
+        } else {
+            # KLUGE avoid busy-wait on "tail" of an active savegame
+            sleep(0.2);
+        }
     }
-    sleep($Replay_Delay);
-    my $esc = ReadKey(-1);
-    # NOTE this could switch input over to the player and start
-    # appending to the savegame file, but that's more work
-    game_over('Escaped!') if defined $esc and $esc eq "\033";
+    print $Save_FH $key if defined $Save_FH;
     return $key;
 }
 
 sub report_position {
-    log_message(
-        'Transponder reports [' . join(',', $Animates[HERO][LMC][WHERE]->@*) . ']');
+    log_message('Transponder reports ['
+          . join(',', $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ])
+          . ']');
     return MOVE_FAILED, 0;
 }
 
@@ -1600,7 +1655,7 @@ sub update_gameover {
     state $count = 0;
     raycast_fov(1);
     tcflush(STDIN_FILENO, TCIFLUSH);
-    my $key = $Read_Key->(\%Key_Commands);
+    my $key = $RKFN->(\%Key_Commands);
     if ($count == 4) {
         has_lost();
     } elsif ($count >= 2) {
@@ -1615,8 +1670,8 @@ sub update_gameover {
 
 sub update_fungi {
     my ($self) = @_;
-    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
-    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@[ PCOL, PROW ];
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my $weap = $self->[STASH][WEAPON];
 
     my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
@@ -1660,7 +1715,7 @@ sub update_fungi {
     my %seen = ($loc => 1);
 
     for my $point (@path) {
-        my ($col, $row) = $point->@*;
+        my ($col, $row) = $point->@[ PCOL, PROW ];
         my $loc = $col . ',' . $row;
         $seen{$loc} = 1;
         if (exists $Visible_Cell{$loc}) {
@@ -1673,9 +1728,9 @@ sub update_fungi {
     with_adjacent(
         $mcol, $mrow,
         sub {
-            my $loc = join ',', $_[0]->@*;
+            my $loc = join ',', $_[0]->@[ PCOL, PROW ];
             return if $seen{$loc}++ or !exists $Visible_Cell{$loc} or irand(10) < 8;
-            print at(map { MAP_DOFF + $_ } $_[0]->@*), 'X'
+            print at(map { MAP_DOFF + $_ } $_[0]->@[ PCOL, PROW ]), 'X'
               if exists $Visible_Cell{$loc};
             push @spread, $_[0];
         }
@@ -1692,8 +1747,8 @@ sub update_fungi {
 
 sub update_ghast {
     my ($self) = @_;
-    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
-    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@[ PCOL, PROW ];
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my $weap = $self->[STASH][WEAPON];
 
     my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
@@ -1704,7 +1759,7 @@ sub update_ghast {
         return MOVE_OKAY, $cost if onein(8);
         my @nearby;
         with_adjacent($tcol, $trow, sub { push @nearby, $_[0] });
-        ($tcol, $trow) = pick(\@nearby)->@*;
+        ($tcol, $trow) = pick(\@nearby)->@[ PCOL, PROW ];
     }
 
     my @path;
@@ -1740,9 +1795,9 @@ sub update_ghast {
     return MOVE_OKAY, $cost unless @path;
 
     for my $point (@path) {
-        my $loc = join ',', $point->@*;
+        my $loc = join ',', $point->@[ PCOL, PROW ];
         if (exists $Visible_Cell{$loc}) {
-            print at(map { MAP_DOFF + $_ } $point->@*), '-';
+            print at(map { MAP_DOFF + $_ } $point->@[ PCOL, PROW ]), '-';
             $Violent_Sleep_Of_Reason = 1;
         }
     }
@@ -1761,8 +1816,8 @@ sub update_ghast {
 
 sub update_mimic {
     my ($self) = @_;
-    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
-    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@[ PCOL, PROW ];
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my $weap = $self->[STASH][WEAPON];
 
     my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
@@ -1797,7 +1852,7 @@ sub update_mimic {
 
     if (@nearby) {
         log_message('A mortar shell explodes nearby!');
-        my ($ncol, $nrow) = pick(\@nearby)->@*;
+        my ($ncol, $nrow) = pick(\@nearby)->@[ PCOL, PROW ];
         my $lmc   = $LMap[$nrow][$ncol];
         my $buddy = $lmc->[ANIMAL];
         if (defined $buddy) {
@@ -1832,14 +1887,19 @@ sub update_player {
 
     tcflush(STDIN_FILENO, TCIFLUSH);
     while (1) {
-        my $key = $Read_Key->(\%Key_Commands);
+        my $key = defined $Sticky ? $Sticky : $RKFN->(\%Key_Commands);
         ($ret, $cost, my $code) = $Key_Commands{$key}->($self);
         pkc_log_code($code) if defined $code;
         last                if $ret != MOVE_FAILED;
     }
 
-    if (defined $self->[STASH][SHIELDUP]
-        and $self->[STASH][HITPOINTS] < START_HP) {
+    if (defined $Sticky) {
+        undef $Sticky if --$Sticky_Max <= 0;
+        sleep($Draw_Delay) unless $Sticky eq '.';
+    }
+
+    my $hp = $self->[STASH][HITPOINTS];
+    if (defined $self->[STASH][SHIELDUP] and $hp < START_HP) {
         my $need  = START_HP - $self->[STASH][HITPOINTS];
         my $offer = between(
             0,
@@ -1849,13 +1909,15 @@ sub update_player {
 
         my $heal = between(0, $need, $offer);
         $self->[STASH][SHIELDUP][STASH][GEM_VALUE] -= $heal;
-        $self->[STASH][HITPOINTS] += $heal;
+        $hp = $self->[STASH][HITPOINTS] += $heal;
+        undef $Sticky if $hp == START_HP;
 
         if ($self->[STASH][SHIELDUP][STASH][GEM_VALUE] <= 0) {
             pkc_log_code('0113');
             log_message(
                 'The ' . $self->[STASH][SHIELDUP][STASH][GEM_NAME] . ' chips and shatters!');
             undef $self->[STASH][SHIELDUP];
+            undef $Sticky;
             print display_shieldup();
         }
     }
@@ -1868,8 +1930,8 @@ sub update_player {
 # when player is in range try to shoot them
 sub update_troll {
     my ($self) = @_;
-    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
-    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@[ PCOL, PROW ];
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my $weap = $self->[STASH][WEAPON];
 
     my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
@@ -1922,9 +1984,9 @@ sub update_troll {
     return MOVE_OKAY, $cost unless @path;
 
     for my $point (@path) {
-        my $loc = join ',', $point->@*;
+        my $loc = join ',', $point->@[ PCOL, PROW ];
         if (exists $Visible_Cell{$loc}) {
-            print at(map { MAP_DOFF + $_ } $point->@*), '-';
+            print at(map { MAP_DOFF + $_ } $point->@[ PCOL, PROW ]), '-';
             $Violent_Sleep_Of_Reason = 1;
         }
     }
@@ -1949,8 +2011,8 @@ sub update_troll {
 # targetting arrays prevent friendly fire and property damage
 sub update_stalker {
     my ($self) = @_;
-    my ($mcol, $mrow) = $self->[LMC][WHERE]->@*;
-    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@*;
+    my ($mcol, $mrow) = $self->[LMC][WHERE]->@[ PCOL, PROW ];
+    my ($tcol, $trow) = $Animates[HERO][LMC][WHERE]->@[ PCOL, PROW ];
     my $weap = $self->[STASH][WEAPON];
 
     my ($hits, $cost) = does_hit(distance($mcol, $mrow, $tcol, $trow), $weap);
@@ -1984,8 +2046,8 @@ sub update_stalker {
     return MOVE_OKAY, $cost if $hits < 1 or !@path;
 
     for my $point (@path) {
-        my $loc = join ',', $point->@*;
-        print at(map { MAP_DOFF + $_ } $point->@*), '='
+        my $loc = join ',', $point->@[ PCOL, PROW ];
+        print at(map { MAP_DOFF + $_ } $point->@[ PCOL, PROW ]), '='
           if exists $Visible_Cell{$loc};
     }
     apply_damage($Animates[HERO], 'attackby', $self);

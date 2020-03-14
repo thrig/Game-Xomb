@@ -8,9 +8,69 @@ use Getopt::Long qw(GetOptions);
 use Game::Xomb;
 use POSIX qw(strftime);
 
+$0 = 'xomb';
+
 GetOptions(
-    'help|h|?' => sub {
-        warn <<'TLDR';
+    'delay=f'        => \$Game::Xomb::Draw_Delay,
+    'err=s'          => \my $err,
+    'help|h|?'       => \&emit_help,
+    'replay-delay=f' => \$Game::Xomb::Replay_Delay,
+    'replay=s'       => \my $replay,
+    'save=s'         => \my $save,
+    'seed=i'         => \$Game::Xomb::Seed,
+    'today|daily'    => \my $Flag_Today,
+    'version|v'      => sub { say $Game::Xomb::VERSION; exit 1 },
+) or exit 64;
+
+if (-t STDERR) {
+    close STDERR;
+    if (defined $err) {
+        unless (open STDERR, '>', $err) {
+            say "Could not redirect STDERR to '$err': $!";
+            exit 1;
+        }
+        STDERR->autoflush(1);
+    }
+}
+
+if (defined $replay) {
+    open $Game::Xomb::Replay_FH, '<', $replay
+      or die "could not read '$replay': $!\n";
+    my $header = readline $Game::Xomb::Replay_FH;
+    chomp $header;
+    # NOTE version information is ignored for now
+    $Game::Xomb::Seed = (split ':', $header, 2)[1];
+    $Game::Xomb::RKFN = \&Game::Xomb::replay;
+} else {
+    $Game::Xomb::RKFN = \&Game::Xomb::getkey;
+    unless (defined $Game::Xomb::Seed) {
+        # the daily seed is a tradition from Brogue
+        if ($Flag_Today) {
+            $Game::Xomb::Seed = strftime '%Y%m%d', localtime;
+        } else {
+            # eh, it's a game
+            # https://flak.tedunangst.com/post/random-in-the-wild
+            $Game::Xomb::Seed = time();
+        }
+    }
+}
+
+# jsf.c takes a uint32_t; ensure that the Perl variable matches what
+# that code internalizes
+$Game::Xomb::Seed = unpack 'L', pack 'L', $Game::Xomb::Seed;
+
+if (defined $save) {
+    open $Game::Xomb::Save_FH, '>', $save or die "could not write to '$save': $!\n";
+    $Game::Xomb::Save_FH->autoflush(1);
+    say $Game::Xomb::Save_FH $Game::Xomb::VERSION . ':' . $Game::Xomb::Seed;
+}
+
+Game::Xomb::game_loop;
+
+exit(1);    # NOTREACHED
+
+sub emit_help {
+    warn <<'TLDR';
 Usage: xomb [options]
 
   --err=file     - send STDERR to this file if not already redirected
@@ -34,62 +94,8 @@ debug with a command similar to
 and then inspect the log file when things do go awry
 
 TLDR
-        exit 64;
-    },
-    'delay=f'     => \$Game::Xomb::Draw_Delay,
-    'err=s'       => \my $err,
-    'replay=s'    => \my $replay,
-    'replay-delay=f' => \$Game::Xomb::Replay_Delay,
-    'save=s'      => \my $save,
-    'seed=i'      => \$Game::Xomb::Seed,
-    'today|daily' => \my $Flag_Today,
-    'version|v'   => sub { say $Game::Xomb::VERSION; exit 1 },
-) or exit 64;
-
-if (-t STDERR) {
-    close STDERR;
-    if (defined $err) {
-        unless (open STDERR, '>', $err) {
-            say "Could not redirect STDERR to '$err': $!";
-            exit 1;
-        }
-        STDERR->autoflush(1);
-    }
+    exit 64;
 }
-
-if (defined $replay) {
-    open $Game::Xomb::Save_FH, '<', $replay or die "could not read '$save': $!\n";
-    my $header = readline $Game::Xomb::Save_FH;
-    chomp $header;
-    $Game::Xomb::Seed = unpack 'L', pack 'L', (split ':', $header, 2)[1];
-    $Game::Xomb::Read_Key = \&Game::Xomb::replay;
-} else {
-    $Game::Xomb::Read_Key = \&Game::Xomb::getkey;
-    unless (defined $Game::Xomb::Seed) {
-        # a daily seed is a tradition for Brogue
-        if ($Flag_Today) {
-            $Game::Xomb::Seed = strftime "%Y%m%d", localtime;
-        } else {
-            # eh, it's a game
-            # https://flak.tedunangst.com/post/random-in-the-wild
-            $Game::Xomb::Seed = time;
-        }
-    }
-    # JSF takes a uint32_t; ensure that the Perl variable matches what JSF
-    # internalizes
-    $Game::Xomb::Seed = unpack 'L', pack 'L', $Game::Xomb::Seed;
-
-    if (defined $save) {
-        open $Game::Xomb::Save_FH, '>', $save or die "could not write to '$save': $!\n";
-        $Game::Xomb::Save_FH->autoflush(1);
-        say $Game::Xomb::Save_FH $Game::Xomb::VERSION . ':' . $Game::Xomb::Seed;
-    }
-}
-
-$0 = 'xomb';
-Game::Xomb::game_loop;
-
-exit(1);    # NOTREACHED
 
 __END__
 =encoding utf8
@@ -100,9 +106,15 @@ B<xomb> - a game featuring @ versus the Xarci Bedo
 
 =head1 SYNOPSIS
 
-B<xomb> I<--delay=f> I<--err=file> I<--save=file> [ I<--seed=i> | I<--today> ] I<--version>
+Without arguments a new game with a seed based on the current epoch will
+be started. The I<--today> flag will set the seed to YYYYMMDD in the
+local timezone.
 
-B<xomb> I<--delay=f> I<--err=file> I<--replay=file> B<--replay-delay=f>
+  xomb --delay=f --err=file --save=file [ --seed=i | --today ] 
+
+  xomb --delay=f --err=file --replay-delay=f --replay=file --save=file
+
+  xomb --version
 
 =head1 DESCRIPTION
 
@@ -121,50 +133,56 @@ B<xomb> I<--delay=f> I<--err=file> I<--replay=file> B<--replay-delay=f>
 
 =head2 Options
 
+Abbreviations of these options may be possible unless the
+C<POSIXLY_CORRECT> environment variable is set.
+
 =over 4
 
 =item I<--delay=seconds>
 
-Floating point value to sleep after events the player may wish to take
-notice of. Probably should be much lower than C<1.0>. Default is
+Floating point value to sleep for after events the player may wish to
+take notice of, such as when damage is taken or between updates while
+running. Probably should be much lower than C<1.0>. Default is
 C<0.15> seconds.
 
 =item I<--err=file>
 
-Send STDERR to this file if not already redirected.
+Send STDERR to this file if not already redirected. Otherwise STDERR
+is closed by default.
 
-=item I<--replay=file>
+=item I<--help> I<-h> I<-?>
 
-Replays a game from I<--save> file output. Causes I<--save> I<--seed>
-and other flags to be ignored.
-
-Hitting escape while replaying a game will stop the replay (and exit
-from the game).
+Shows the options available and then quits the game.
 
 =item I<--replay-delay=seconds>
 
-Floating point value to sleep after a move is replayed. There is also a
-delay if a read of the savegame file comes back undefined; this (poorly)
-supports a tail of an active savegame file.
+Floating point value to sleep for after a move is replayed.
+
+=item I<--replay=file>
+
+Replays a game from I<--save> file output. Causes I<--seed> and other
+flags to be ignored.
+
+Hitting the escape key while replaying a game will stop the replay and
+turn control over to standard input.
 
 =item I<--save=file>
 
-Save the keystrokes used (and seed and version information) to the
-given I<file>.
+Saves the keystrokes used (plus the version and seed as a header line) to
+the given I<file>.
 
 =item I<--seed=i>
 
-Start the game with the seed set to the given integer value. The RNG
-algorithm will very likely change in future releases of the game.
+Start the game with the seed set to the given integer (32-bit, unsigned).
 
 =item I<--today>
 
 Set the seed to YYYYMMDD in the local timezone. I<--seed> has priority
 if both are set.
 
-=item I<--version>
+=item I<--version> I<-v>
 
-Shows the B<xomb> version and quits the game.
+Shows the B<xomb> module version and then quits the game.
 
 =back
 
@@ -194,7 +212,8 @@ view of the FOV scanner. Range and coordinate details are also provided.
 =head3 Motion
 
 Movement is like that of L<rogue(6)>. With numlock enabled a numeric
-keypad may be able to be used.
+keypad may be able to be used. With the shift key the direction will be
+run towards, for better or worse, up to a maximum of four cells.
 
    y  k  u
     \ | /
@@ -253,6 +272,12 @@ C<Y> or C<N> to complete or escape that action.
 =item C<R>
 
 Remove an equipped item. Does not take energy.
+
+=item C<S>
+
+Snooze until shield recharged or the gem breaks. Care should be
+taken that nothing outside the FOV scanner array view can acquire a
+target lock.
 
 =item C<d>
 
@@ -368,6 +393,15 @@ Dragonstone is required for vertical ascent module gate activation.
 =head2 PKC-0014
 
 Gate is out of service, or was never enabled by the contractors.
+
+=head2 PKC-0063
+
+Shield module REST status error.
+
+=head2 PKC-0065
+
+Continuous operation mode disabled due to positive return on
+proximity sensor or FOV scanner array.
 
 =head2 PKC-007E
 
