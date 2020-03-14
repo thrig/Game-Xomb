@@ -221,7 +221,10 @@ run towards, for better or worse, up to a maximum of four cells.
     / | \
    b  j  n
 
-Unlike in L<rogue(6)> diagonal moves cost more time (C<14> versus C<10>).
+Unlike in L<rogue(6)> diagonal moves take more time (C<14> versus
+C<10>). Ranged attacks are likewise calculated using Pythagorean
+distances. The FOV by contrast degrades randomly over Chebyshev
+distance. Various weapon effects also use the Chebyshev distance.
 
 =head3 Other
 
@@ -474,9 +477,12 @@ Jeremy Mates
 
 B<xomb> assumes that the terminal used supports various ANSI or XTerm
 Control Sequences. Given certain time constraints (7DRL 2020) not much
-portability testing has been done. It should work where any suitable
-unix terminal is available.
+portability testing has been done (beyond OpenBSD 6.6 and Mac OS X
+10.11). It should work where any suitable unix terminal is available
+and where the game (and required modules) can be compiled and run
+without issue.
 
-numpad support only works for motion and not in examine mode.
+Numpad support is limited and does not support running nor leaps in
+examine mode.
 
 =cut

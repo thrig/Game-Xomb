@@ -30,9 +30,10 @@
     we call this foe. Do you now seek the stone
     below of Dragon born to call your own?
 
-Xomb is a terminal-based roguelike. Assuming that the development tools,
-perl, App::cpanminus, and possibly also local::lib are installed and
-setup, in a suitable terminal install and run the game via:
+Xomb is a terminal-based roguelike. Assuming that the development tools
+(C99 support is required), perl, App::cpanminus, and optionally
+local::lib are installed and setup in a suitable terminal install and
+run the game via:
 
     cpanm Game::Xomb
     xomb

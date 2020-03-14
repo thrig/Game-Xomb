@@ -316,7 +316,8 @@ our %Key_Commands = (
     "\032" => sub { return MOVE_FAILED, 0, '1220' },                 # <C-z>
     "\033" => sub { return MOVE_FAILED, 0, '121B' },
 );
-# weak effort at numpad support
+# weak effort at numpad support (not supported for running nor for leaps
+# in examine mode)
 @Key_Commands{qw/1 2 3 4 5 6 7 8 9/} = @Key_Commands{qw/b j n h . l y k u/};
 
 # limited duration run because the raycast does not stop for unseen gems
@@ -1739,6 +1740,7 @@ sub update_fungi {
         my $max = 3;
         $max += 2 if onein(40);
         $max += 3 if onein(250);
+        # mostly it just looks impressive
         plasma_annihilator($self, \%seen, \@spread, 1, $max);
     }
 
@@ -2104,10 +2106,10 @@ Game::Xomb - a game featuring @ versus the Xarci Bedo
 
 =head1 SYNOPSIS
 
-Xomb is a terminal-based roguelike. Assuming that the development
-tools, L<perl(1)>, L<App::cpanminus>, and possibly also
-L<local::lib> are installed and setup, in a suitable terminal
-install and run the game via:
+Xomb is a terminal-based roguelike. Assuming that the development tools
+(C99 support is required), L<perl(1)>, L<App::cpanminus>, and optionally
+L<local::lib> are installed and setup in a suitable terminal install and
+run the game via:
 
     cpanm Game::Xomb
     xomb
