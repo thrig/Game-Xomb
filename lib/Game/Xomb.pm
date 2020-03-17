@@ -395,12 +395,12 @@ sub apply_damage {
     }
 }
 
+# this used to pass along more information to the passive_* calls
 sub apply_passives {
-    my ($ani, $duration, $newcell) = @_;
-    for my $i (grep defined $ani->[LMC][$_], VEGGIE, MINERAL) {
-        my $fn = $ani->[LMC][$i][UPDATE];
-        $fn->($ani, $ani->[LMC][$i], $duration, $newcell) if defined $fn;
-    }
+    my ($ani, $duration, $isnewcell) = @_;
+    my $fn = $ani->[LMC][MINERAL][UPDATE] // return;
+    push @_, $ani->[LMC][MINERAL];
+    goto $fn->&*;
 }
 
 sub await_quit { $RKFN->({ "\033" => 1, 'q' => 1 }) }
@@ -1290,21 +1290,20 @@ sub nope_regarding {
     return $ret;
 }
 
+# only to the hero; map generation must place rubble/floor under monsters
 sub passive_burn {
-    my ($ani, $obj, $duration, $newcell) = @_;
-    pkc_log_code('007E') if $ani->[SPECIES] == HERO;
+    my ($ani, $duration, $isnewcell, $obj) = @_;
+    pkc_log_code('007E');
     log_message('Acid intrusion reported by shield module.')
       unless $Warned_About{acidburn}++;
-    my $src;
-    $src->[SPECIES] = ACID;
-    apply_damage($ani, 'acidburn', $src, $duration);
+    apply_damage($ani, 'acidburn', $obj, $duration);
 }
 
 sub passive_msg_maker {
     my ($message, $oneshot) = @_;
     sub {
-        my ($ani, $obj, $duration, $newcell) = @_;
-        if ($newcell) {
+        my ($ani, $duration, $isnewcell, $obj) = @_;
+        if ($isnewcell) {
             log_message($message);
             undef $obj->[UPDATE] if $oneshot;
         }
