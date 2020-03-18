@@ -557,7 +557,7 @@ sub generate_map {
 
     # reset to bare ground plus some white noise seed points
     my @seeds;
-    my $left  = 100;        # hopefully overkill
+    my $left  = 80;         # hopefully overkill
     my $total = MAP_SIZE;
     for my $r (0 .. MAP_ROWS - 1) {
         for my $c (0 .. MAP_COLS - 1) {
@@ -696,7 +696,7 @@ sub generate_map {
         pathable($col, $row, $herop);
     }
 
-    return $put_ammie, $gcount, scalar(@seeds), $camping;
+    return $put_ammie, $gcount, $GGV, scalar(@seeds), $camping;
 }
 
 sub getkey {

@@ -63,21 +63,25 @@ my @camping;
 # close point to some other point...)
 my @seeds;
 
+my @GGV;
+
 for my $level ($minlvl .. $maxlvl) {
     $Game::Xomb::Level = $level;
     for (1 .. $trials) {
-        my ($ammie, $gemcount, $left, $camps) = Game::Xomb::generate_map;
+        my ($ammie, $gemcount, $gemvalue, $left, $camps) = Game::Xomb::generate_map;
         # amulet only generated on levels 4 and 5 and only if player
         # does not already have it
         is $ammie, ($level > 3 and !$ENV{XOMB_AMULET}) ? 1 : 0;
         push @camping, $camps;
         push @seeds,   $left;
+        push @GGV,     $gemvalue;
         audit_map() if $ENV{AUTHOR_TEST_JMATES};
     }
 }
 
 report('camping',        \@camping);
 report('free map seeds', \@seeds);
+report('GGV',            \@GGV);
 
 done_testing;
 
