@@ -7,7 +7,7 @@ use warnings;
 use Game::Xomb;
 use Test::Most;
 
-plan tests => 27;
+plan tests => 28;
 
 my $deeply = \&eq_or_diff;
 
@@ -83,8 +83,9 @@ is Game::Xomb::between(1, 6, 9),  6;
     # recharge the shield (unless the shield is regenerating...)
     is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE;
 
-    my ($gem, $gemv) = Game::Xomb::make_gem;
+    my ($gem, $gemv, $bonus) = Game::Xomb::make_gem;
     ok $gemv > 0;
+    ok $bonus >= 0;
 
     push $loot->@*, $gem;
     is Game::Xomb::loot_value, Game::Xomb::AMULET_VALUE + $gemv;

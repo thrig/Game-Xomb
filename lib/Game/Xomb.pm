@@ -91,7 +91,7 @@ sub RUBBLE ()  { 12 }
 sub WALL ()    { 13 }
 
 sub AMULET_NAME ()  { 'Dragonstone' }
-sub AMULET_REGEN () { 5 }               # slow so less likely to burn out
+sub AMULET_REGEN () { 6 }               # slow so less likely to burn out
 sub AMULET_VALUE () { 1000 }
 
 # for ANIMALS (shared with VEGGIES and MINERALS for the first few slots)
@@ -379,6 +379,10 @@ sub apply_damage {
             log_message($Descript{ $ani->[SPECIES] }
                   . ' destroyed by '
                   . $Descript{ $rest[0]->[SPECIES] });
+            if ($ani->[SPECIES] == FUNGI and $ani->[LMC][MINERAL] != GATE and onein(20)) {
+                reify($ani->[LMC], MINERAL,
+                    passive_msg_maker('Broken rainbow conduits jut up from the regolith.'));
+            }
             $ani->[BLACK_SPOT] = 1;
             undef $ani->[LMC][ANIMAL];
         }
@@ -547,11 +551,10 @@ sub game_over {
 }
 
 sub generate_map {
-    splice @Animates, 1;
-
     my $findex    = min($Level, scalar @Level_Features) - 1;
     my $has_ammie = has_amulet();
 
+    splice @Animates, 1;
     my $herop = $Animates[HERO][LMC][WHERE];
     my ($col, $row) = $herop->@[ PCOL, PROW ];
 
@@ -623,31 +626,28 @@ sub generate_map {
     my $GGV    = 0;
     my $gcount = 0;
     while (!$has_ammie) {
-        my ($gem, $value) = make_gem();
+        my ($gem, $value, $bonus) = make_gem();
         my $point = extract(\@seeds);
         ($col, $row) = $point->@[ PCOL, PROW ];
         push @goodp, $point;
         $LMap[$row][$col][VEGGIE] = $gem;
         # influences max score and how much shield repair is possible
-        $GGV += $value;
+        $GGV  += $value;
+        $gmax += $bonus;
         $gcount++;
         last if $GGV > $gmax;
     }
 
-    # pick a point and ensure that there is a walkable path between all
-    # of the good points and that (mostly) hidden point. this provides
-    # some hints on the final level due to the lack of rubble there
+    # ensure that the good points (gems, gates) and the hero are all
+    # connected. this may provide some hints on the final level due to
+    # the lack of rubble
     ($col, $row) = extract(\@seeds)->@[ PCOL, PROW ];
-    $LMap[$row][$col][MINERAL] = $Thingy{ onein(10) ? RUBBLE : FLOOR };
+    $LMap[$row][$col][MINERAL] = $Thingy{ onein(100) ? RUBBLE : FLOOR };
+    if (onein(4)) {
+        reify($LMap[$row][$col], MINERAL,
+            passive_msg_maker("Something was written here, but you can't make it out.", 1));
+    }
     pathable($col, $row, $herop, @goodp);
-    reify(
-        $LMap[$row][$col],
-        MINERAL,
-        coinflip()
-        ? passive_msg_maker(
-            'Something is written here, but you can\'t quite make it out.', 1)
-        : ()
-    );
 
     # and now an assortment of monsters
     for (1 .. $Level + roll(3, 3) + $has_ammie * 4) {
@@ -877,36 +877,38 @@ sub make_amulet {
 sub make_gem {
     my ($name, $value, $regen);
     # lower regen is better and thus more rare. higher value makes for a
-    # higher score, or more shield that can be repaired. rare gems could
-    # be a curse as there will be fewer to find on a given level
+    # higher score, or more shield that can be repaired
     if (onein(100)) {
         $name  = "Bloodstone";
-        $value = 100 + roll(2, 10);
+        $value = 90 + roll(2, 10);
         $regen = 3;
     } elsif (onein(20)) {
         $name  = "Sunstone";
-        $value = 60 + roll(2, 12);
+        $value = 60 + roll(2, 10);
         $regen = 4;
     } else {
         $name  = "Moonstone";
-        $value = 30 + roll(2, 20);
+        $value = 40 + roll(2, 10);
         $regen = 4;
     }
     # flavor text makes things better
-    my @adj = qw/Imperial Mystic Rose Smoky Warped/;
+    my $bonus = 0;
     if (onein(1000)) {
-        $name  = 'Pearl ' . $name;
+        $name = 'Pearl ' . $name;
+        $value += 90 + roll(2, 10);
         $regen = 2;
-        $value += 40 + roll(2, 10);
+        $bonus = 100;
     } elsif (onein(3)) {
+        my @adj = qw/Imperial Mystic Rose Smoky Warped/;
         $name = pick(\@adj) . ' ' . $name;
-        $value += 50 + roll(2, 10);
+        $value += 40 + roll(2, 10);
+        $bonus = irand(30);
     }
     my $gem;
     $gem->@[ GENUS, SPECIES, DISPLAY ] = $Thingy{ GEM, }->@*;
     $gem->[STASH]->@[ GEM_NAME, GEM_VALUE, GEM_REGEN ] =
       ($name, $value, $regen);
-    return $gem, $value;
+    return $gem, $value, $bonus;
 }
 
 sub make_monster {
@@ -1317,8 +1319,10 @@ sub pathable {
             sub {
                 my ($c, $r) = @_;
                 my $cell = $LMap[$r][$c][MINERAL];
-                if ($cell->[SPECIES] == WALL or $cell->[SPECIES] == HOLE) {
-                    $LMap[$r][$c][MINERAL] = $Thingy{ onein(10) ? RUBBLE : FLOOR };
+                if (   $cell->[SPECIES] == WALL
+                    or $cell->[SPECIES] == HOLE
+                    or ($cell->[SPECIES] == ACID and onein(4))) {
+                    $LMap[$r][$c][MINERAL] = $Thingy{ onein(7) ? RUBBLE : FLOOR };
                 }
             },
             $col,
