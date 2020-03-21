@@ -381,7 +381,7 @@ sub apply_damage {
                   . ' destroyed by '
                   . $Descript{ $rest[0]->[SPECIES] });
             if ($ani->[SPECIES] == FUNGI and $ani->[LMC][MINERAL] != GATE and onein(20)) {
-                reify($ani->[LMC], MINERAL,
+                reify($ani->[LMC],
                     passive_msg_maker('Broken rainbow conduits jut up from the regolith.'));
             }
             $ani->[BLACK_SPOT] = 1;
@@ -644,7 +644,7 @@ sub generate_map {
     ($col, $row) = extract(\@seeds)->@[ PCOL, PROW ];
     $LMap[$row][$col][MINERAL] = $Thingy{ onein(100) ? RUBBLE : FLOOR };
     if (onein(4)) {
-        reify($LMap[$row][$col], MINERAL,
+        reify($LMap[$row][$col],
             passive_msg_maker("Something was written here, but you can't make it out.", 1));
     }
     pathable($col, $row, $herop, @goodp);
@@ -1531,9 +1531,9 @@ sub refresh_board {
 
 # similar to tu'a in Lojban
 sub reify {
-    my ($lmc, $i, $update) = @_;
-    $lmc->[$i] = [ $lmc->[$i]->@* ];
-    $lmc->[$i][UPDATE] = $update if defined $update;
+    my ($lmc, $update) = @_;
+    $lmc->[MINERAL] = [ $lmc->[MINERAL]->@* ];
+    $lmc->[MINERAL][UPDATE] = $update if defined $update;
 }
 
 sub relocate {
@@ -2391,7 +2391,7 @@ Apply acid damage because the player is in a pool of acid.
 
 Returns a subroutine that issues a message when a cell is entered into.
 The cell should probably be made unique with B<reify> first as otherwise
-all floor tiles of that type will get the message.
+all floor tiles of that type will share the same update routine.
 
 =item B<pathable> I<col> I<row> I<points ...>
 
