@@ -25,7 +25,7 @@ XSLoader::load('Game::Xomb', $VERSION);    # distance, line drawing, RNG
 sub NEED_ROWS () { 24 }
 sub NEED_COLS () { 80 }
 
-# ANSI or XTerm control sequences - http://invisible-island.net/xterm/
+# ANSI or XTerm Control Sequences - https://invisible-island.net/xterm/
 sub ALT_SCREEN ()   { "\e[?1049h" }
 sub CLEAR_LINE ()   { "\e[2K" }
 sub CLEAR_RIGHT ()  { "\e[K" }
@@ -164,7 +164,7 @@ our %Warned_About;          # limit annoying messages
 our %Damage_From = (
     acidburn => sub {
         my ($src, $duration) = @_;
-        my $max    = int($duration / 2);
+        my $max    = $duration >> 1;
         my $damage = 0;
         for (1 .. $duration) {
             $damage += coinflip();
@@ -445,7 +445,7 @@ sub display_cellobjs {
 sub display_hitpoints {
     my $hp = $Animates[HERO][STASH][HITPOINTS];
     $hp = 0 if $hp < 0;
-    my $ticks = int $hp / 2;
+    my $ticks = $hp >> 1;
     my $hpbar = '=' x $ticks;
     $hpbar .= '-' if $hp & 1;
     my $len = length $hpbar;
@@ -534,7 +534,7 @@ sub game_loop {
             # NOTE other half of this is applied in the Bump-into-HOLE
             # logic, elsewhere. this last half happens here as the new
             # level is not yet available prior to the fall
-            apply_passives($Animates[HERO], $Animates[HERO][STASH][ECOST] / 2, 1);
+            apply_passives($Animates[HERO], $Animates[HERO][STASH][ECOST] >> 1, 1);
             show_status_bar();
             log_message('Proximal ' . AMULET_NAME . ' readings detected.') if $ammie;
             next GLOOP;
@@ -582,7 +582,7 @@ sub generate_map {
     for my $floor (RUBBLE, ACID, HOLE, WALL) {
         my $want = $Level_Features[$findex]{$floor} // 0;
         # ... and a few more than called for, for variety
-        $want += irand(2 + $want / 2) if $want > 0;
+        $want += irand(2 + ($want >> 1)) if $want > 0;
         while ($want > 0) {
             my $goal = max($want, min(20, int($want / 10)));
             my $seed = extract(\@seeds);
@@ -1069,7 +1069,7 @@ sub move_animate {
         return MOVE_FAILED, 0
           if nope_regarding('Falling may cause damage', undef,
             'You decide against it.');
-        apply_passives($ani, $cost / 2, 0);
+        apply_passives($ani, $cost >> 1, 0);
         log_message('You plunge down into the crevasse.');
         relocate($ani, $dcol, $drow);
         pkc_log_code('0099');
@@ -1079,9 +1079,9 @@ sub move_animate {
         apply_damage($ani, 'falling', $src);
         return MOVE_LVLDOWN, $cost;
     } else {
-        apply_passives($ani, $cost / 2, 0);
+        apply_passives($ani, $cost >> 1, 0);
         relocate($ani, $dcol, $drow);
-        apply_passives($ani, $cost / 2, 1);
+        apply_passives($ani, $cost >> 1, 1);
         return MOVE_OKAY, $cost;
     }
 }
@@ -1603,7 +1603,7 @@ sub rubble_delay {
             $Violent_Sleep_Of_Reason = 1;
             log_message('Slow progress!');
         }
-        return int($cost / 2) + 2 + irand(4);
+        return ($cost >> 1) + 2 + irand(4);
     } else {
         return 2 + irand(4);
     }
