@@ -108,7 +108,7 @@ void
 linecb (callback, int x0, int y0, int x1, int y1)
     SV *callback;
     PREINIT:
-        int answer, count, dx, dy, err, e2, sx, sy, online, iters;
+        int answer, dx, dy, err, e2, sx, sy, online, iters;
     PPCODE:
         dSP;
         dx = abs(x1 - x0);
@@ -129,8 +129,7 @@ linecb (callback, int x0, int y0, int x1, int y1)
                 mPUSHs(newSViv(y0));
                 mPUSHs(newSViv(iters));
                 PUTBACK;
-                count = call_sv(callback, G_SCALAR);
-                if (count != 1) croak("multiple return values from callback");
+                call_sv(callback, G_SCALAR);
                 SPAGAIN;
                 answer = POPi;
                 FREETMPS;
@@ -192,7 +191,7 @@ void
 walkcb (callback, int x0, int y0, int x1, int y1)
     SV *callback;
     PREINIT:
-        int answer, count, dx, dy, err, e2, sx, sy, online, iters;
+        int answer, dx, dy, err, e2, sx, sy, online, iters;
     PPCODE:
         dSP;
         dx = abs(x1 - x0);
@@ -213,8 +212,7 @@ walkcb (callback, int x0, int y0, int x1, int y1)
                 mPUSHs(newSViv(y0));
                 mPUSHs(newSViv(iters));
                 PUTBACK;
-                count = call_sv(callback, G_SCALAR);
-                if (count != 1) croak("multiple return values from callback");
+                call_sv(callback, G_SCALAR);
                 SPAGAIN;
                 answer = POPi;
                 FREETMPS;
