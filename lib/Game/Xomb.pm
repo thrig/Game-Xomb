@@ -2215,6 +2215,12 @@ can be in range.
 Removes a random element from the given array reference and returns it.
 Uses the JSF random number generator (see C<src/jsf.c>).
 
+Note that the original order of the array reference will not be
+preserved. If that order is important, do not use this call. Order
+preserving extraction can be done with:
+
+  ... = splice @array, irand(scalar @array), 1;
+
 =item B<fisher_yates_shuffle>
 
 Shuffles an array reference in place. Uses the JSF random number

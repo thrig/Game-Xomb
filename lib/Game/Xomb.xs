@@ -64,21 +64,24 @@ distance (uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)
         RETVAL
 
 # splice a random element out of an array reference
+# NOTE this does not preserve the order of the array as that requires a
+# series of copies anytime an item is extracted from not the end which
+# for large lists will be most of the time (previous versions of this
+# code did such a waterfall copy)
 SV *
 extract (avref)
     AV *avref;
     PREINIT:
         SSize_t i, len, rnd;
-        SV *dunno, **src, **dst;
+        SV *dunno, **swap;
     CODE:
         len = av_len(avref) + 1;
         if (len == 0) XSRETURN_UNDEF;
         rnd = ranval() % len;
         dunno = av_delete(avref, rnd, 0);
-        if (rnd != len -1) {
-            dst = &AvARRAY(avref)[rnd];
-            src = dst + 1;
-            for (i = rnd; i < len - 1; i++) *dst++ = *src++;
+        if (rnd != len - 1) {
+            swap = av_fetch(avref, len - 1, FALSE);
+            av_store(avref, rnd, *swap);
             AvFILLp(avref) -= 1;
             AvMAX(avref) -= 1;
         }
