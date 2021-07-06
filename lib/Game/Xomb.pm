@@ -12,7 +12,6 @@ use warnings;
 use List::Util qw(min max);
 use List::UtilsBy qw(min_by nsort_by);
 use POSIX qw(STDIN_FILENO TCIFLUSH tcflush);
-use Scalar::Util qw(weaken);
 use Term::ReadKey qw(GetTerminalSize ReadKey ReadMode);
 use Time::HiRes qw(sleep);
 require XSLoader;
@@ -938,7 +937,6 @@ sub make_player {
     my $row = irand(MAP_ROWS);
     $LMap[$row][$col][ANIMAL] = $hero;
     $hero->[LMC] = $LMap[$row][$col];
-    weaken $hero->[LMC];
 
     $Animates[HERO] = $hero;
 
@@ -1378,7 +1376,6 @@ sub place_monster {
 
     $LMap[$row][$col][ANIMAL] = $monst;
     $monst->[LMC] = $LMap[$row][$col];
-    weaken $monst->[LMC];
 
     push @Animates, $monst;
 
@@ -1547,7 +1544,6 @@ sub relocate {
     undef $LMap[ $src->[PROW] ][ $src->[PCOL] ][ANIMAL];
 
     $ani->[LMC] = $dest_lmc;
-    weaken $ani->[LMC];
 
     my $cell = $lmc->[VEGGIE] // $lmc->[MINERAL];
     print at(map { MAP_DOFF + $_ } $src->@[ PCOL, PROW ]), $cell->[DISPLAY],
